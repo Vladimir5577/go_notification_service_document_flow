@@ -1,0 +1,31 @@
+services:
+
+  notification_dbgate:
+    container_name: notification_dbgate
+    image: dbgate/dbgate:5.5.6-alpine
+    restart: always
+    ports:
+      # Используем 8089 порт, так как 8088 занят dbgate канбана
+      - 8089:3000
+    # Монтируем volume базы, чтобы dbgate мог работать с данными при необходимости
+    volumes:
+      - ./../postgres_data_notification:/data/postgres
+    environment:
+      CONNECTIONS: con1
+
+      LABEL_con1: Notification Postgres
+      # Имя контейнера базы в нашей докер-сети notification-net
+      SERVER_con1: notification_postgres
+      USER_con1: ${DB_USER:-root}
+      PASSWORD_con1: ${DB_PASSWORD:-password}
+      # Внутри докер-сети база слушает стандартный порт 5432
+      PORT_con1: 5432
+      ENGINE_con1: postgres@dbgate-plugin-postgres
+    networks:
+      - notification-net
+
+networks:
+  notification-net:
+    # Указываем, что сеть создана другим docker-compose (основным)
+    external: true
+    name: notification-net
