@@ -8,20 +8,24 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
-	"time"
 
+	"notification_service_document_flow/internal/helper"
 	"notification_service_document_flow/internal/messaging/events"
 	"notification_service_document_flow/internal/model"
 	"notification_service_document_flow/internal/repository"
 )
 
 // NotificationService handles creation of notifications from events.
+//
+// Time handling: we store actual Moscow wall time (civil time) in the
+// TIMESTAMP columns. All time conversion is done via helper.Clock.
 type NotificationService struct {
-	repo *repository.NotificationRepository
+	repo  *repository.NotificationRepository
+	clock helper.Clock
 }
 
-func NewNotificationService(repo *repository.NotificationRepository) *NotificationService {
-	return &NotificationService{repo: repo}
+func NewNotificationService(repo *repository.NotificationRepository, clk helper.Clock) *NotificationService {
+	return &NotificationService{repo: repo, clock: clk}
 }
 
 // CreateFromKanbanEvent creates notifications for each recipient based on the event.
@@ -38,12 +42,16 @@ func (s *NotificationService) CreateFromKanbanEvent(ctx context.Context, evt eve
 	for _, recipientID := range evt.Recipients {
 		title, message, link := s.buildTitleMessageLink(evt)
 
+		// Store actual Moscow wall time so that the numbers in the TIMESTAMP
+		// column match what users see on the clock in Moscow.
+		createdAt := s.clock.Now()
+
 		notification := &model.Notification{
 			Type:      mapEventTypeToDB(evt.Type),
 			Title:     title,
 			Message:   message,
 			Link:      link,
-			CreatedAt: time.Now().UTC(),
+			CreatedAt: createdAt,
 			ReadAt:    nil,
 			UserID:    recipientID,
 		}

@@ -37,11 +37,14 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 	}
 
 	userRepo := repository.NewUserRepository(db)
-	notificationRepo := repository.NewNotificationRepository(db)
+
+	// Pass Clock (from helper) so all time handling for TIMESTAMP columns goes through
+	// the centralized wall-time rules.
+	notificationRepo := repository.NewNotificationRepository(db, cfg.Clock)
 
 	notificationHandler := handler.NewNotificationHandler(notificationRepo)
 
-	notificationSvc := service.NewNotificationService(notificationRepo)
+	notificationSvc := service.NewNotificationService(notificationRepo, cfg.Clock)
 	kanbanNotifConsumer := notifications.NewConsumer(cfg, notificationSvc)
 
 	r := setupRouter(notificationHandler, authMw)

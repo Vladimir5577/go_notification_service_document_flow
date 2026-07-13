@@ -1,5 +1,6 @@
-// Package helper содержит утилиты HTTP-слоя: единообразную запись JSON-ответов
-// и маппинг доменных ошибок (apperr) в HTTP-статусы.
+// Package helper содержит вспомогательные утилиты:
+// - HTTP: WriteJSON, WriteError, IDParam
+// - Время: helper.Clock — централизованная работа с московским wall time для TIMESTAMP колонок
 package helper
 
 import (

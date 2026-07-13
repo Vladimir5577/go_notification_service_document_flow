@@ -2,21 +2,22 @@ package repository
 
 import (
 	"context"
-	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"notification_service_document_flow/internal/helper"
 	"notification_service_document_flow/internal/model"
 	"notification_service_document_flow/internal/repository/dbgen"
 )
 
 type NotificationRepository struct {
-	Db *pgxpool.Pool
+	Db    *pgxpool.Pool
+	clock helper.Clock // provides wall-time helpers for TIMESTAMP columns
 }
 
-func NewNotificationRepository(db *pgxpool.Pool) *NotificationRepository {
-	return &NotificationRepository{Db: db}
+func NewNotificationRepository(db *pgxpool.Pool, clk helper.Clock) *NotificationRepository {
+	return &NotificationRepository{Db: db, clock: clk}
 }
 
 func (r *NotificationRepository) FindAllForUser(ctx context.Context, userID int64, page, pageSize int) ([]model.Notification, error) {
@@ -31,7 +32,7 @@ func (r *NotificationRepository) FindAllForUser(ctx context.Context, userID int6
 		return nil, err
 	}
 
-	return mapDBNotifications(dbNotifs), nil
+	return mapDBNotifications(dbNotifs, r.clock), nil
 }
 
 func (r *NotificationRepository) FindLatestForUser(ctx context.Context, userID int64, limit int) ([]model.Notification, error) {
@@ -45,7 +46,7 @@ func (r *NotificationRepository) FindLatestForUser(ctx context.Context, userID i
 		return nil, err
 	}
 
-	return mapDBNotifications(dbNotifs), nil
+	return mapDBNotifications(dbNotifs, r.clock), nil
 }
 
 func (r *NotificationRepository) CountAllForUser(ctx context.Context, userID int64) (int, error) {
@@ -81,7 +82,11 @@ func (r *NotificationRepository) Create(ctx context.Context, n *model.Notificati
 
 	createdAt := n.CreatedAt
 	if createdAt.IsZero() {
-		createdAt = time.Now().UTC()
+		// Fallback: use wall time so the numbers stored in TIMESTAMP represent
+		// actual Moscow civil time.
+		createdAt = r.clock.Now()
+	} else {
+		createdAt = r.clock.ToWall(createdAt)
 	}
 
 	var msg pgtype.Text
@@ -113,19 +118,22 @@ func (r *NotificationRepository) Create(ctx context.Context, n *model.Notificati
 		return nil, err
 	}
 
-	return mapDBNotification(&dbNotif), nil
+	return mapDBNotification(&dbNotif, r.clock), nil
 }
 
-// mappers convert dbgen types (pgtype) to clean model types
-func mapDBNotifications(dbNotifs []dbgen.Notification) []model.Notification {
+// mappers convert dbgen types (pgtype) to clean model types.
+//
+// FromDB is applied so that the wall-clock numbers stored in the DB
+// are correctly interpreted with Moscow location (see helper.Clock docs).
+func mapDBNotifications(dbNotifs []dbgen.Notification, clk helper.Clock) []model.Notification {
 	res := make([]model.Notification, len(dbNotifs))
 	for i := range dbNotifs {
-		res[i] = *mapDBNotification(&dbNotifs[i])
+		res[i] = *mapDBNotification(&dbNotifs[i], clk)
 	}
 	return res
 }
 
-func mapDBNotification(db *dbgen.Notification) *model.Notification {
+func mapDBNotification(db *dbgen.Notification, clk helper.Clock) *model.Notification {
 	n := &model.Notification{
 		ID:     db.ID,
 		Type:   db.Type,
@@ -141,10 +149,10 @@ func mapDBNotification(db *dbgen.Notification) *model.Notification {
 		n.Link = &db.Link.String
 	}
 	if db.CreatedAt.Valid {
-		n.CreatedAt = db.CreatedAt.Time
+		n.CreatedAt = clk.FromDB(db.CreatedAt.Time)
 	}
 	if db.ReadAt.Valid {
-		t := db.ReadAt.Time
+		t := clk.FromDB(db.ReadAt.Time)
 		n.ReadAt = &t
 	}
 

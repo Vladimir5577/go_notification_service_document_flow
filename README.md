@@ -73,6 +73,34 @@ docker compose -f docker-compose.dbgate.yml down
 - `user.upserted`, `user.deleted` — синхронизация пользователей (Очередь: `notification.user_sync`)
 - `kanban.notification.*` — создание уведомлений
 
+## Работа со временем
+
+Проект хранит **фактическое московское время** (wall time) в колонках `TIMESTAMP(0)`:
+
+- `created_at`, `read_at` в таблице `notification`
+- `deleted_at`, `synced_at` в таблице `users`
+
+### Почему именно так
+
+- Требование: дата в базе и в API должна быть именно той, которую видят пользователи (московское гражданское время).
+- Используются колонки без таймзоны (`TIMESTAMP`, а не `TIMESTAMPTZ`).
+- Все операции записи проходят через `helper.Clock` (расположен в `internal/helper/clock.go`):
+  - `Clock.Now()` — текущее московское время
+  - `Clock.ToWall(t)` — подготовка времени перед записью в БД
+  - `Clock.FromDB(t)` — правильная интерпретация чисел при чтении из БД
+- `NOW()` в SQL тоже даёт московское время благодаря параметру `timezone=Europe/Moscow` в строке подключения и `TZ` в контейнере.
+
+### Важные правила
+
+- Никогда не используй `time.Now().UTC()` или голый `time.Now()` при записи в БД.
+- При чтении из базы всегда используй хелперы из `helper.Clock`, чтобы у `time.Time` была правильная локация.
+- Вся логика централизована в `internal/helper/clock.go` (там подробная документация).
+
+См. также:
+- `internal/config/config.go` (поле `Clock`)
+- `internal/helper/clock.go`
+- Комментарии в `notification_repository.go` и `service/notification_service.go`
+
 ## Полезные команды
 
 **Логи сервиса**:

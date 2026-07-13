@@ -11,6 +11,7 @@ import (
 
 	amqp "github.com/rabbitmq/amqp091-go"
 
+	"notification_service_document_flow/internal/helper"
 	"notification_service_document_flow/internal/config"
 	"notification_service_document_flow/internal/model"
 	"notification_service_document_flow/internal/repository"
@@ -30,6 +31,7 @@ type Consumer struct {
 	repo           *repository.UserRepository
 	prefetchCount  int
 	reconnectDelay time.Duration
+	clk            helper.Clock // wall time helpers for TIMESTAMP storage
 }
 
 func NewConsumer(cfg *config.Config, repo *repository.UserRepository) *Consumer {
@@ -37,6 +39,7 @@ func NewConsumer(cfg *config.Config, repo *repository.UserRepository) *Consumer 
 		dsn:            cfg.RabbitMQDSN,
 		exchange:       cfg.RabbitMQExchange,
 		queue:          cfg.UserSyncQueue,
+		clk:            cfg.Clock,
 		repo:           repo,
 		prefetchCount:  10,
 		reconnectDelay: 5 * time.Second,
@@ -204,9 +207,14 @@ func (c *Consumer) processDelivery(ctx context.Context, delivery amqp.Delivery) 
 		if deletedAt == nil {
 			fallback := delivery.Timestamp
 			if fallback.IsZero() {
-				fallback = time.Now().UTC()
+				fallback = time.Now()
 			}
-			deletedAt = &fallback
+			// Convert incoming time (often UTC) to Moscow wall time before storing
+			// into the TIMESTAMP column.
+			deletedAt = c.clk.ToWallPtr(&fallback)
+		} else if deletedAt != nil {
+			// Normalize incoming deletedAt to our wall time representation.
+			deletedAt = c.clk.ToWallPtr(deletedAt)
 		}
 
 		if err := c.repo.MarkUserDeleted(ctx, userID, *deletedAt); err != nil {
@@ -220,6 +228,11 @@ func (c *Consumer) processDelivery(ctx context.Context, delivery amqp.Delivery) 
 	user, err := payload.user()
 	if err != nil {
 		return false, err
+	}
+
+	// Normalize DeletedAt to Moscow wall time before persisting (TIMESTAMP stores wall numbers).
+	if user.DeletedAt != nil {
+		user.DeletedAt = c.clk.ToWallPtr(user.DeletedAt)
 	}
 
 	if err := c.repo.UpsertUsers(ctx, []model.User{user}); err != nil {
@@ -282,10 +295,14 @@ func (p userSyncPayload) avatarName() *string {
 }
 
 func (p userSyncPayload) deletedAt() *time.Time {
+	var t *time.Time
 	if p.DeletedAt.Time != nil {
-		return p.DeletedAt.Time
+		t = p.DeletedAt.Time
+	} else {
+		t = p.DeletedAtSnake.Time
 	}
-	return p.DeletedAtSnake.Time
+	// Normalization to wall time is performed in processDelivery using the consumer's clock.
+	return t
 }
 
 func (p userSyncPayload) user() (model.User, error) {
