@@ -55,7 +55,7 @@ func (c *Consumer) Run(ctx context.Context) error {
 			if ctx.Err() != nil {
 				return nil
 			}
-			slog.Error("RabbitMQ consumer синхронизации пользователей остановился", "error", err)
+			slog.Warn("RabbitMQ consumer (user sync) waiting to reconnect", "error", err)
 		}
 
 		select {

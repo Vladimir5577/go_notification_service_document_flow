@@ -21,6 +21,11 @@ docker compose build
 docker compose up -d
 ```
 
+### 3. Apply migrations
+```bash
+~/go/bin/goose up
+```
+
 ## Разработка
 
 ### Локальная сборка (Hot Reload)
@@ -42,10 +47,26 @@ go install github.com/sqlc-dev/sqlc/cmd/sqlc@latest
 ```
 
 Полезные команды БД:
-- **Применить миграции**: `goose up`
-- **Генерация кода (sqlc)**: `sqlc generate` (запускать после изменения структуры БД или запросов)
-- **DBGate (запуск веб-клиента БД)**: `docker compose -f docker-compose.dbgate.yml up -d`
-- **DBGate (остановка)**: `docker compose -f docker-compose.dbgate.yml down`
+
+**Применить миграции**:
+```bash
+~/go/bin/goose up
+```
+
+**Генерация кода (sqlc)** (запускать после изменения структуры БД или запросов):
+```bash
+sqlc generate
+```
+
+**DBGate (запуск веб-клиента БД)**:
+```bash
+docker compose -f docker-compose.dbgate.yml up -d
+```
+
+**DBGate (остановка)**:
+```bash
+docker compose -f docker-compose.dbgate.yml down
+```
 
 ### RabbitMQ
 Сервис подписывается на exchange `events`:
@@ -53,6 +74,18 @@ go install github.com/sqlc-dev/sqlc/cmd/sqlc@latest
 - `kanban.notification.*` — создание уведомлений
 
 ## Полезные команды
-- Логи сервиса: `docker compose logs -f notification_service`
-- Статус контейнеров: `docker compose ps`
-- Полная пересборка: `docker compose build --no-cache`
+
+**Логи сервиса**:
+```bash
+docker compose logs -f notification_service
+```
+
+**Статус контейнеров**:
+```bash
+docker compose ps
+```
+
+**Полная пересборка**:
+```bash
+docker compose build --no-cache
+```

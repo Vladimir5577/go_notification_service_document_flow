@@ -65,7 +65,7 @@ func (a *App) Run() error {
 		go func() {
 			defer backgroundWG.Done()
 			if err := a.userSyncConsumer.Run(appCtx); err != nil {
-				slog.Error("Ошибка RabbitMQ consumer синхронизации пользователей", "error", err)
+				slog.Warn("User sync consumer stopped", "error", err)
 			}
 		}()
 	}
@@ -76,7 +76,7 @@ func (a *App) Run() error {
 		go func() {
 			defer backgroundWG.Done()
 			if err := a.kanbanNotificationConsumer.Run(appCtx); err != nil {
-				slog.Error("Ошибка RabbitMQ kanban notification consumer", "error", err)
+				slog.Warn("Kanban notification consumer stopped", "error", err)
 			}
 		}()
 	}

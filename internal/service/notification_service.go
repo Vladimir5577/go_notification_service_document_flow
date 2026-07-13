@@ -175,10 +175,12 @@ func normalizeLink(raw string) *string {
 			// Keep board param for SPA.
 			s := fmt.Sprintf("/projects?board=%d", boardID)
 
-			// Preserve card if present in query or fragment
+			// Preserve card or task if present in query or fragment
 			if u, err := url.Parse(raw); err == nil {
 				if card := u.Query().Get("card"); card != "" {
-					s += "&card=" + card
+					s += "&task=" + card
+				} else if task := u.Query().Get("task"); task != "" {
+					s += "&task=" + task
 				}
 				if u.Fragment != "" {
 					s += "#" + u.Fragment

@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"strconv"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/joho/godotenv"
@@ -60,17 +61,57 @@ func ConnectDB(conf *Config) (*pgxpool.Pool, error) {
 		conf.DBName,
 	)
 
-	pool, err := pgxpool.New(context.Background(), connStr)
-	if err != nil {
-		return nil, err
+	const maxAttempts = 12 // ~60 seconds total with 5s interval
+
+	var lastErr error
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		pool, err := pgxpool.New(context.Background(), connStr)
+		if err == nil {
+			if pingErr := pool.Ping(context.Background()); pingErr == nil {
+				if attempt > 1 {
+					slog.Info("Database connection established", "attempt", attempt)
+				}
+				return pool, nil
+			} else {
+				lastErr = pingErr
+			}
+			pool.Close()
+		} else {
+			lastErr = err
+		}
+
+		slog.Warn("Waiting for database to be ready", "attempt", attempt, "max", maxAttempts, "error", lastErr)
+		time.Sleep(5 * time.Second)
 	}
 
-	if err := pool.Ping(context.Background()); err != nil {
-		pool.Close()
-		return nil, err
-	}
+	return nil, fmt.Errorf("failed to connect to database after %d attempts: %w", maxAttempts, lastErr)
+}
 
-	return pool, nil
+// ValidateSchema checks that the required tables exist in the database.
+// If the tables are missing (migrations not applied), it returns an error.
+// The application should exit immediately in this case instead of starting
+// consumers that will spam retry errors.
+func ValidateSchema(db *pgxpool.Pool) error {
+	requiredTables := []string{"notification", "users"}
+
+	for _, table := range requiredTables {
+		var exists bool
+		query := `SELECT EXISTS (
+			SELECT 1 FROM information_schema.tables 
+			WHERE table_schema = 'public' AND table_name = $1
+		)`
+		if err := db.QueryRow(context.Background(), query, table).Scan(&exists); err != nil {
+			return fmt.Errorf("failed to check table existence: %w", err)
+		}
+		if !exists {
+			return fmt.Errorf(
+				"database schema is not initialized: table %q does not exist. "+
+					"Run migrations first: goose up",
+				table,
+			)
+		}
+	}
+	return nil
 }
 
 func getEnv(key, fallback string) string {

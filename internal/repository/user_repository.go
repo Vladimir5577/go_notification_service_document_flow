@@ -67,7 +67,7 @@ func (r *UserRepository) UpsertUsers(ctx context.Context, users []model.User) er
 	defer tx.Rollback(ctx)
 
 	_, err = tx.Exec(ctx, `
-		CREATE TEMP TABLE users_tmp (LIKE users INCLUDING DEFAULTS)
+		CREATE TEMP TABLE users_tmp (LIKE users INCLUDING ALL)
 		ON COMMIT DROP
 	`)
 	if err != nil {

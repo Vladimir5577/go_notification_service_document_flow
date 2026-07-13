@@ -23,6 +23,12 @@ func main() {
 	}
 	defer db.Close()
 
+	if err := config.ValidateSchema(db); err != nil {
+		slog.Error("Database schema check failed", "error", err)
+		slog.Error("Hint: make sure you ran 'goose up' (or apply migrations/00001_init_notification_schema.sql)")
+		os.Exit(1)
+	}
+
 	application, err := app.NewApp(cfg, db)
 	if err != nil {
 		slog.Error("Can't initialize application", "error", err)

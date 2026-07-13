@@ -48,7 +48,7 @@ func (c *Consumer) Run(ctx context.Context) error {
 			if ctx.Err() != nil {
 				return nil
 			}
-			slog.Error("RabbitMQ kanban notification consumer остановился", "error", err)
+			slog.Warn("RabbitMQ consumer (kanban notifications) waiting to reconnect", "error", err)
 		}
 
 		select {
