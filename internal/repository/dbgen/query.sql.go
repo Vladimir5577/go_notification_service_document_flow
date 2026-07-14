@@ -41,14 +41,14 @@ RETURNING id, type, title, message, link, created_at, read_at, extra, user_id
 `
 
 type CreateNotificationParams struct {
-	Type      string           `json:"type"`
-	Title     string           `json:"title"`
-	Message   pgtype.Text      `json:"message"`
-	Link      pgtype.Text      `json:"link"`
-	CreatedAt pgtype.Timestamp `json:"created_at"`
-	ReadAt    pgtype.Timestamp `json:"read_at"`
-	Extra     []byte           `json:"extra"`
-	UserID    int64            `json:"user_id"`
+	Type      string             `json:"type"`
+	Title     string             `json:"title"`
+	Message   pgtype.Text        `json:"message"`
+	Link      pgtype.Text        `json:"link"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	ReadAt    pgtype.Timestamptz `json:"read_at"`
+	Extra     []byte             `json:"extra"`
+	UserID    int64              `json:"user_id"`
 }
 
 func (q *Queries) CreateNotification(ctx context.Context, arg CreateNotificationParams) (Notification, error) {

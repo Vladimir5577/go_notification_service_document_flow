@@ -30,19 +30,8 @@ type Config struct {
 	DBPassword string
 	DBName     string
 
-	// DBTimezone controls the session timezone for Postgres (affects NOW() etc.).
-	// We set it to Europe/Moscow so that "real" local time is used when storing
-	// in TIMESTAMP(0) columns. Go side also uses the same location.
-	DBTimezone string
-
-	// TimezoneLocation is kept for backward compatibility during transition.
-	// Prefer using the Clock field below.
-	TimezoneLocation *time.Location
-
-	// Clock provides helpers for storing and reading wall-clock (Moscow) time
-	// in TIMESTAMP WITHOUT TIME ZONE columns.
-	//
-	// The implementation lives in internal/helper (clock.go).
+	// Clock provides current time in UTC (truncated to seconds).
+	// Used for TIMESTAMPTZ(0) columns. See internal/helper/clock.go
 	Clock helper.Clock
 }
 
@@ -65,34 +54,23 @@ func Load() *Config {
 		DBUser:     getEnv("DB_USER", ""),
 		DBPassword: getEnv("DB_PASSWORD", ""),
 		DBName:     getEnv("DB_NAME", ""),
-
-		DBTimezone: getEnv("DB_TIMEZONE", "Europe/Moscow"),
 	}
 
-	// Load the location once. This is central to storing "real time" (Moscow wall time).
-	loc, err := time.LoadLocation(c.DBTimezone)
-	if err != nil {
-		slog.Warn("Failed to load DBTimezone location, falling back to UTC", "timezone", c.DBTimezone, "err", err)
-		loc = time.UTC
-	}
-	c.TimezoneLocation = loc
-	c.Clock = helper.NewClock(loc)
+	c.Clock = helper.NewClock()
 
 	return c
 }
 
 func ConnectDB(conf *Config) (*pgxpool.Pool, error) {
-	// Include timezone so that NOW() and timestamp literals use Moscow wall time on DB side.
-	// Combined with container TZ and our clock.Clock helpers, this ensures we store
-	// actual civil time (not UTC) in TIMESTAMP columns.
+	// No timezone param: we use TIMESTAMPTZ and work in UTC on Go side.
+	// DB stores absolute moments; client timezone is handled by the browser.
 	connStr := fmt.Sprintf(
-		"host=%s port=%d user=%s password=%s dbname=%s sslmode=disable timezone=%s",
+		"host=%s port=%d user=%s password=%s dbname=%s sslmode=disable",
 		conf.DBHost,
 		conf.DBPort,
 		conf.DBUser,
 		conf.DBPassword,
 		conf.DBName,
-		conf.DBTimezone,
 	)
 
 	const maxAttempts = 12 // ~60 seconds total with 5s interval
@@ -163,21 +141,8 @@ func getEnvAsInt(key string, fallback int) int {
 	return fallback
 }
 
-// Now returns current wall-clock time in the configured timezone (Europe/Moscow).
-//
-// Prefer using cfg.Clock.Now() for new code. This method is kept for compatibility.
+// Now returns current time (UTC, truncated to seconds).
 func (c *Config) Now() time.Time {
 	return c.Clock.Now()
-}
-
-// ToLocal converts the given time to wall time in our configured timezone.
-//
-// This is used for times coming from external sources (RabbitMQ messages,
-// AMQP delivery timestamps, etc.) so that the numeric values stored in
-// TIMESTAMP columns represent actual Moscow civil time.
-//
-// Prefer cfg.Clock.ToWall() in new code.
-func (c *Config) ToLocal(t time.Time) time.Time {
-	return c.Clock.ToWall(t)
 }
 

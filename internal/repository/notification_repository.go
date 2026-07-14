@@ -2,22 +2,21 @@ package repository
 
 import (
 	"context"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"notification_service_document_flow/internal/helper"
 	"notification_service_document_flow/internal/model"
 	"notification_service_document_flow/internal/repository/dbgen"
 )
 
 type NotificationRepository struct {
-	Db    *pgxpool.Pool
-	clock helper.Clock // provides wall-time helpers for TIMESTAMP columns
+	Db *pgxpool.Pool
 }
 
-func NewNotificationRepository(db *pgxpool.Pool, clk helper.Clock) *NotificationRepository {
-	return &NotificationRepository{Db: db, clock: clk}
+func NewNotificationRepository(db *pgxpool.Pool) *NotificationRepository {
+	return &NotificationRepository{Db: db}
 }
 
 func (r *NotificationRepository) FindAllForUser(ctx context.Context, userID int64, page, pageSize int) ([]model.Notification, error) {
@@ -32,7 +31,7 @@ func (r *NotificationRepository) FindAllForUser(ctx context.Context, userID int6
 		return nil, err
 	}
 
-	return mapDBNotifications(dbNotifs, r.clock), nil
+	return mapDBNotifications(dbNotifs), nil
 }
 
 func (r *NotificationRepository) FindLatestForUser(ctx context.Context, userID int64, limit int) ([]model.Notification, error) {
@@ -46,7 +45,7 @@ func (r *NotificationRepository) FindLatestForUser(ctx context.Context, userID i
 		return nil, err
 	}
 
-	return mapDBNotifications(dbNotifs, r.clock), nil
+	return mapDBNotifications(dbNotifs), nil
 }
 
 func (r *NotificationRepository) CountAllForUser(ctx context.Context, userID int64) (int, error) {
@@ -82,11 +81,9 @@ func (r *NotificationRepository) Create(ctx context.Context, n *model.Notificati
 
 	createdAt := n.CreatedAt
 	if createdAt.IsZero() {
-		// Fallback: use wall time so the numbers stored in TIMESTAMP represent
-		// actual Moscow civil time.
-		createdAt = r.clock.Now()
+		createdAt = time.Now().UTC().Truncate(time.Second)
 	} else {
-		createdAt = r.clock.ToWall(createdAt)
+		createdAt = createdAt.UTC().Truncate(time.Second)
 	}
 
 	var msg pgtype.Text
@@ -99,9 +96,9 @@ func (r *NotificationRepository) Create(ctx context.Context, n *model.Notificati
 		link = pgtype.Text{String: *n.Link, Valid: true}
 	}
 
-	var readAt pgtype.Timestamp
+	var readAt pgtype.Timestamptz
 	if n.ReadAt != nil {
-		readAt = pgtype.Timestamp{Time: *n.ReadAt, Valid: true}
+		readAt = pgtype.Timestamptz{Time: *n.ReadAt, Valid: true}
 	}
 
 	dbNotif, err := queries.CreateNotification(ctx, dbgen.CreateNotificationParams{
@@ -109,7 +106,7 @@ func (r *NotificationRepository) Create(ctx context.Context, n *model.Notificati
 		Title:     n.Title,
 		Message:   msg,
 		Link:      link,
-		CreatedAt: pgtype.Timestamp{Time: createdAt, Valid: true},
+		CreatedAt: pgtype.Timestamptz{Time: createdAt, Valid: true},
 		ReadAt:    readAt,
 		Extra:     n.Extra,
 		UserID:    n.UserID,
@@ -118,22 +115,18 @@ func (r *NotificationRepository) Create(ctx context.Context, n *model.Notificati
 		return nil, err
 	}
 
-	return mapDBNotification(&dbNotif, r.clock), nil
+	return mapDBNotification(&dbNotif), nil
 }
 
-// mappers convert dbgen types (pgtype) to clean model types.
-//
-// FromDB is applied so that the wall-clock numbers stored in the DB
-// are correctly interpreted with Moscow location (see helper.Clock docs).
-func mapDBNotifications(dbNotifs []dbgen.Notification, clk helper.Clock) []model.Notification {
+func mapDBNotifications(dbNotifs []dbgen.Notification) []model.Notification {
 	res := make([]model.Notification, len(dbNotifs))
 	for i := range dbNotifs {
-		res[i] = *mapDBNotification(&dbNotifs[i], clk)
+		res[i] = *mapDBNotification(&dbNotifs[i])
 	}
 	return res
 }
 
-func mapDBNotification(db *dbgen.Notification, clk helper.Clock) *model.Notification {
+func mapDBNotification(db *dbgen.Notification) *model.Notification {
 	n := &model.Notification{
 		ID:     db.ID,
 		Type:   db.Type,
@@ -149,10 +142,10 @@ func mapDBNotification(db *dbgen.Notification, clk helper.Clock) *model.Notifica
 		n.Link = &db.Link.String
 	}
 	if db.CreatedAt.Valid {
-		n.CreatedAt = clk.FromDB(db.CreatedAt.Time)
+		n.CreatedAt = db.CreatedAt.Time
 	}
 	if db.ReadAt.Valid {
-		t := clk.FromDB(db.ReadAt.Time)
+		t := db.ReadAt.Time
 		n.ReadAt = &t
 	}
 

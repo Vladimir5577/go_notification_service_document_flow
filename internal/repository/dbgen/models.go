@@ -9,24 +9,24 @@ import (
 )
 
 type Notification struct {
-	ID        int64            `json:"id"`
-	Type      string           `json:"type"`
-	Title     string           `json:"title"`
-	Message   pgtype.Text      `json:"message"`
-	Link      pgtype.Text      `json:"link"`
-	CreatedAt pgtype.Timestamp `json:"created_at"`
-	ReadAt    pgtype.Timestamp `json:"read_at"`
-	Extra     []byte           `json:"extra"`
-	UserID    int64            `json:"user_id"`
+	ID        int64              `json:"id"`
+	Type      string             `json:"type"`
+	Title     string             `json:"title"`
+	Message   pgtype.Text        `json:"message"`
+	Link      pgtype.Text        `json:"link"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	ReadAt    pgtype.Timestamptz `json:"read_at"`
+	Extra     []byte             `json:"extra"`
+	UserID    int64              `json:"user_id"`
 }
 
 type User struct {
-	ID         int64            `json:"id"`
-	Login      string           `json:"login"`
-	Lastname   string           `json:"lastname"`
-	Firstname  string           `json:"firstname"`
-	Patronymic pgtype.Text      `json:"patronymic"`
-	AvatarName pgtype.Text      `json:"avatar_name"`
-	DeletedAt  pgtype.Timestamp `json:"deleted_at"`
-	SyncedAt   pgtype.Timestamp `json:"synced_at"`
+	ID         int64              `json:"id"`
+	Login      string             `json:"login"`
+	Lastname   string             `json:"lastname"`
+	Firstname  string             `json:"firstname"`
+	Patronymic pgtype.Text        `json:"patronymic"`
+	AvatarName pgtype.Text        `json:"avatar_name"`
+	DeletedAt  pgtype.Timestamptz `json:"deleted_at"`
+	SyncedAt   pgtype.Timestamptz `json:"synced_at"`
 }

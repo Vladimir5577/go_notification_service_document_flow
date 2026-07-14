@@ -16,9 +16,6 @@ import (
 )
 
 // NotificationService handles creation of notifications from events.
-//
-// Time handling: we store actual Moscow wall time (civil time) in the
-// TIMESTAMP columns. All time conversion is done via helper.Clock.
 type NotificationService struct {
 	repo  *repository.NotificationRepository
 	clock helper.Clock
@@ -42,8 +39,6 @@ func (s *NotificationService) CreateFromKanbanEvent(ctx context.Context, evt eve
 	for _, recipientID := range evt.Recipients {
 		title, message, link := s.buildTitleMessageLink(evt)
 
-		// Store actual Moscow wall time so that the numbers in the TIMESTAMP
-		// column match what users see on the clock in Moscow.
 		createdAt := s.clock.Now()
 
 		notification := &model.Notification{

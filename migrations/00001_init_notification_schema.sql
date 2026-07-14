@@ -15,8 +15,8 @@ CREATE TABLE users (
     firstname   VARCHAR(50) NOT NULL,
     patronymic  VARCHAR(50),
     avatar_name VARCHAR(255),
-    deleted_at  TIMESTAMP(0),
-    synced_at   TIMESTAMP(0) NOT NULL DEFAULT NOW()
+    deleted_at  TIMESTAMPTZ(0),
+    synced_at   TIMESTAMPTZ(0) NOT NULL DEFAULT NOW()
 );
 
 -- Таблица уведомлений
@@ -26,8 +26,8 @@ CREATE TABLE notification (
     title       VARCHAR(255) NOT NULL,
     message     TEXT,
     link        VARCHAR(512),
-    created_at  TIMESTAMP(0) NOT NULL DEFAULT NOW(),
-    read_at     TIMESTAMP(0),
+    created_at  TIMESTAMPTZ(0) NOT NULL DEFAULT NOW(),
+    read_at     TIMESTAMPTZ(0),
     extra       JSON,
     user_id     BIGINT NOT NULL
 );

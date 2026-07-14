@@ -38,9 +38,7 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 
 	userRepo := repository.NewUserRepository(db)
 
-	// Pass Clock (from helper) so all time handling for TIMESTAMP columns goes through
-	// the centralized wall-time rules.
-	notificationRepo := repository.NewNotificationRepository(db, cfg.Clock)
+	notificationRepo := repository.NewNotificationRepository(db)
 
 	notificationHandler := handler.NewNotificationHandler(notificationRepo)
 

@@ -1,6 +1,8 @@
 package dto
 
 import (
+	"time"
+
 	"notification_service_document_flow/internal/model"
 )
 
@@ -31,7 +33,8 @@ type LatestResponse struct {
 }
 
 func ToNotificationResponse(n model.Notification) NotificationResponse {
-	createdAt := n.CreatedAt.Format("2006-01-02T15:04:05")
+	// Use RFC3339 so it serializes as ...Z (UTC)
+	createdAt := n.CreatedAt.UTC().Format(time.RFC3339)
 	isRead := n.ReadAt != nil
 
 	return NotificationResponse{

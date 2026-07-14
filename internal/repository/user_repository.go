@@ -112,9 +112,6 @@ func (r *UserRepository) UpsertUsers(ctx context.Context, users []model.User) er
 }
 
 func (r *UserRepository) MarkUserDeleted(ctx context.Context, userID int64, deletedAt time.Time) error {
-	// Note: caller must pass Moscow wall time (use helper.Clock.ToWall or cfg.ToLocal).
-	// synced_at uses NOW() which produces Moscow time thanks to the "timezone=..." parameter
-	// on the database connection string.
 	_, err := r.Db.Exec(ctx, `
 		UPDATE users
 		SET deleted_at = $2,

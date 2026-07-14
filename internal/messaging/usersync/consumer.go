@@ -31,7 +31,7 @@ type Consumer struct {
 	repo           *repository.UserRepository
 	prefetchCount  int
 	reconnectDelay time.Duration
-	clk            helper.Clock // wall time helpers for TIMESTAMP storage
+	clk            helper.Clock // for current time (testability)
 }
 
 func NewConsumer(cfg *config.Config, repo *repository.UserRepository) *Consumer {
@@ -207,14 +207,11 @@ func (c *Consumer) processDelivery(ctx context.Context, delivery amqp.Delivery) 
 		if deletedAt == nil {
 			fallback := delivery.Timestamp
 			if fallback.IsZero() {
-				fallback = time.Now()
+				fallback = c.clk.Now()
 			}
-			// Convert incoming time (often UTC) to Moscow wall time before storing
-			// into the TIMESTAMP column.
-			deletedAt = c.clk.ToWallPtr(&fallback)
+			deletedAt = normalizeToUTC(fallback)
 		} else if deletedAt != nil {
-			// Normalize incoming deletedAt to our wall time representation.
-			deletedAt = c.clk.ToWallPtr(deletedAt)
+			deletedAt = normalizeToUTC(*deletedAt)
 		}
 
 		if err := c.repo.MarkUserDeleted(ctx, userID, *deletedAt); err != nil {
@@ -230,9 +227,9 @@ func (c *Consumer) processDelivery(ctx context.Context, delivery amqp.Delivery) 
 		return false, err
 	}
 
-	// Normalize DeletedAt to Moscow wall time before persisting (TIMESTAMP stores wall numbers).
+	// Normalize DeletedAt to UTC
 	if user.DeletedAt != nil {
-		user.DeletedAt = c.clk.ToWallPtr(user.DeletedAt)
+		user.DeletedAt = normalizeToUTC(*user.DeletedAt)
 	}
 
 	if err := c.repo.UpsertUsers(ctx, []model.User{user}); err != nil {
@@ -301,7 +298,7 @@ func (p userSyncPayload) deletedAt() *time.Time {
 	} else {
 		t = p.DeletedAtSnake.Time
 	}
-	// Normalization to wall time is performed in processDelivery using the consumer's clock.
+	// Normalization to UTC is performed in processDelivery.
 	return t
 }
 
@@ -349,7 +346,7 @@ func (t *nullableTime) UnmarshalJSON(data []byte) error {
 	if err != nil {
 		return err
 	}
-	t.Time = &parsed
+	t.Time = normalizeToUTC(parsed)
 	return nil
 }
 
@@ -367,10 +364,18 @@ func parseTime(value string) (time.Time, error) {
 	for _, layout := range layouts {
 		parsed, err := time.Parse(layout, value)
 		if err == nil {
-			return parsed, nil
+			return parsed.UTC().Truncate(time.Second), nil
 		}
 		lastErr = err
 	}
 
 	return time.Time{}, fmt.Errorf("parse time %q: %w", value, lastErr)
+}
+
+func normalizeToUTC(t time.Time) *time.Time {
+	if t.IsZero() {
+		return nil
+	}
+	normalized := t.UTC().Truncate(time.Second)
+	return &normalized
 }
