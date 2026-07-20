@@ -81,9 +81,10 @@ func (c *Consumer) consume(ctx context.Context) error {
 		return fmt.Errorf("declare queue: %w", err)
 	}
 
-	// Bind to all kanban.notification.* events
+	// Bind to all notification events handled by this consumer
 	routingKeys := []string{
 		"kanban.notification.*",
+		"purchase.notification.*",
 	}
 
 	for _, rk := range routingKeys {
@@ -163,6 +164,17 @@ func (c *Consumer) processDelivery(ctx context.Context, delivery amqp.Delivery) 
 			return fmt.Errorf("%w: %w", errInvalidMessage, err)
 		}
 		if err := c.svc.CreateFromKanbanEvent(ctx, evt); err != nil {
+			return err
+		}
+		return nil
+	}
+
+	if strings.HasPrefix(routingKey, "purchase.notification.") {
+		var evt events.PurchaseNotificationEvent
+		if err := json.Unmarshal(delivery.Body, &evt); err != nil {
+			return fmt.Errorf("%w: %w", errInvalidMessage, err)
+		}
+		if err := c.svc.CreateFromPurchaseEvent(ctx, evt); err != nil {
 			return err
 		}
 		return nil

@@ -66,6 +66,24 @@ func mapTypeToLabel(typ string) string {
 		return "Новый комментарий в задаче"
 	case "DOCUMENT_COMMENT_ADDED":
 		return "Новый комментарий к документу"
+	case "PURCHASE_SUBMITTED":
+		return "Заявка на закупку"
+	case "PURCHASE_APPROVED":
+		return "Закупка согласована"
+	case "PURCHASE_REJECTED":
+		return "Закупка возвращена на доработку"
+	case "PURCHASE_TAKEN":
+		return "Закупка взята в работу"
+	case "PURCHASE_STATUS_CHANGED":
+		return "Статус закупки изменён"
+	case "PURCHASE_DELIVERED":
+		return "Закупка доставлена"
+	case "PURCHASE_CONFIRMED":
+		return "Получение подтверждено"
+	case "PURCHASE_CANCELLED":
+		return "Закупка отменена"
+	case "PURCHASE_COMMENT_ADDED":
+		return "Новый комментарий к закупке"
 	default:
 		return "Уведомление"
 	}

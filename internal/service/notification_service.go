@@ -140,6 +140,100 @@ func mapEventTypeToDB(eventType string) string {
 	}
 }
 
+// CreateFromPurchaseEvent creates notifications for each recipient of a
+// purchase.notification.* event (модуль закупок в Symfony).
+func (s *NotificationService) CreateFromPurchaseEvent(ctx context.Context, evt events.PurchaseNotificationEvent) error {
+	if len(evt.Recipients) == 0 {
+		return nil
+	}
+
+	var firstErr error
+
+	for _, recipientID := range evt.Recipients {
+		title, message, link := buildPurchaseTitleMessageLink(evt)
+
+		notification := &model.Notification{
+			Type:      mapPurchaseEventTypeToDB(evt.Type),
+			Title:     title,
+			Message:   message,
+			Link:      link,
+			CreatedAt: s.clock.Now(),
+			ReadAt:    nil,
+			UserID:    recipientID,
+		}
+
+		if len(evt.Data) > 0 {
+			if extraBytes, err := json.Marshal(evt.Data); err == nil {
+				notification.Extra = extraBytes
+			}
+		}
+
+		if _, err := s.repo.Create(ctx, notification); err != nil {
+			slog.Error("Failed to create purchase notification", "user_id", recipientID, "type", evt.Type, "error", err)
+			if firstErr == nil {
+				firstErr = err
+			}
+		} else {
+			slog.Info("Purchase notification created", "user_id", recipientID, "type", evt.Type, "title", title)
+		}
+	}
+
+	return firstErr
+}
+
+func buildPurchaseTitleMessageLink(evt events.PurchaseNotificationEvent) (string, *string, *string) {
+	data := evt.Data
+	purchaseTitle := getString(data, "purchaseTitle", "")
+	actorName := getString(data, "actorName", "")
+	statusLabel := getString(data, "statusLabel", "")
+	comment := getString(data, "comment", "")
+
+	var title string
+	var msg *string
+
+	switch evt.Type {
+	case "submitted":
+		if v, ok := data["resubmitted"].(bool); ok && v {
+			title = fmt.Sprintf("Заявка на закупку «%s» подана повторно (%s)", purchaseTitle, actorName)
+		} else {
+			title = fmt.Sprintf("Новая заявка на закупку «%s» от %s", purchaseTitle, actorName)
+		}
+	case "approved":
+		title = fmt.Sprintf("Заявка на закупку «%s» согласована", purchaseTitle)
+	case "rejected":
+		title = fmt.Sprintf("Заявка на закупку «%s» возвращена на доработку", purchaseTitle)
+	case "taken":
+		title = fmt.Sprintf("Заявку «%s» взял в работу %s", purchaseTitle, actorName)
+	case "status_changed":
+		title = fmt.Sprintf("Заявка «%s»: %s", purchaseTitle, statusLabel)
+	case "delivered":
+		title = fmt.Sprintf("Заявка «%s» доставлена — подтвердите получение", purchaseTitle)
+	case "confirmed":
+		title = fmt.Sprintf("Получение по заявке «%s» подтверждено", purchaseTitle)
+	case "cancelled":
+		title = fmt.Sprintf("Заявка на закупку «%s» отменена", purchaseTitle)
+	case "comment_added":
+		title = fmt.Sprintf("%s оставил комментарий к заявке «%s»", actorName, purchaseTitle)
+	default:
+		title = getString(data, "title", "Уведомление")
+	}
+
+	if comment != "" {
+		msg = &comment
+	}
+
+	linkStr := getString(data, "link", "")
+	if linkStr != "" {
+		return title, msg, normalizeLink(linkStr)
+	}
+	return title, msg, nil
+}
+
+func mapPurchaseEventTypeToDB(eventType string) string {
+	// PURCHASE_SUBMITTED, PURCHASE_REJECTED, PURCHASE_COMMENT_ADDED, ...
+	return "PURCHASE_" + strings.ToUpper(eventType)
+}
+
 func normalizeLink(raw string) *string {
 	if raw == "" || raw == "#" {
 		return nil
