@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	amqp "github.com/rabbitmq/amqp091-go"
 
 	"notification_service_document_flow/internal/config"
@@ -133,16 +134,23 @@ var errInvalidMessage = errors.New("invalid kanban notification message")
 
 func (c *Consumer) handleDelivery(ctx context.Context, delivery amqp.Delivery) {
 	if err := c.processDelivery(ctx, delivery); err != nil {
-		if errors.Is(err, errInvalidMessage) {
-			slog.Warn("Некорректное kanban notification событие пропущено", "routing_key", delivery.RoutingKey, "error", err)
-			if ackErr := delivery.Ack(false); ackErr != nil {
-				slog.Error("Не удалось подтвердить некорректное сообщение", "error", ackErr)
+		// Постоянные ошибки (битый JSON, слишком длинное значение, нарушение
+		// constraint) повтором не лечатся — сколько ни возвращай в очередь,
+		// результат тот же. Requeue такого сообщения = бесконечный цикл, ровно
+		// он и уронил сервис. Убираем из очереди: Nack(requeue=false) отправит
+		// его в dead-letter exchange (если задана политика) либо отбросит.
+		if isPermanent(err) {
+			slog.Error("kanban notification событие необрабатываемо, снято с очереди",
+				"routing_key", delivery.RoutingKey, "error", err, "body", bodyPreview(delivery.Body))
+			if nackErr := delivery.Nack(false, false); nackErr != nil {
+				slog.Error("Не удалось снять сообщение с очереди RabbitMQ", "error", nackErr)
 			}
 			return
 		}
 
-		// Transient error (e.g. DB) — requeue for retry
-		slog.Error("Не удалось обработать kanban notification событие, будет повторена попытка", "routing_key", delivery.RoutingKey, "error", err)
+		// Временная ошибка (например, БД недоступна) — возвращаем на повтор.
+		slog.Warn("kanban notification событие: временная ошибка, будет повторено",
+			"routing_key", delivery.RoutingKey, "error", err)
 		if nackErr := delivery.Nack(false, true); nackErr != nil {
 			slog.Error("Не удалось вернуть сообщение в RabbitMQ", "error", nackErr)
 		}
@@ -152,6 +160,31 @@ func (c *Consumer) handleDelivery(ctx context.Context, delivery amqp.Delivery) {
 	if err := delivery.Ack(false); err != nil {
 		slog.Error("Не удалось подтвердить сообщение RabbitMQ", "error", err)
 	}
+}
+
+// isPermanent сообщает, что повтор бесполезен: сообщение отравленное
+// (poison message) и должно уйти из очереди, а не крутиться в ней.
+func isPermanent(err error) bool {
+	if errors.Is(err, errInvalidMessage) {
+		return true
+	}
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && len(pgErr.Code) >= 2 {
+		switch pgErr.Code[:2] {
+		case "22", // data exception (22001 value too long, 22P02 invalid text, ...)
+			"23": // integrity constraint violation (not-null, unique, check, fk)
+			return true
+		}
+	}
+	return false
+}
+
+func bodyPreview(body []byte) string {
+	const max = 512
+	if len(body) > max {
+		return string(body[:max]) + "…"
+	}
+	return string(body)
 }
 
 func (c *Consumer) processDelivery(ctx context.Context, delivery amqp.Delivery) error {

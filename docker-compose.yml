@@ -3,6 +3,11 @@ services:
     image: postgres:16.4
     container_name: notification_postgres
     restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "5"
     environment:
       POSTGRES_USER: ${DB_USER:-root}
       POSTGRES_PASSWORD: ${DB_PASSWORD:-password}
@@ -28,6 +33,11 @@ services:
       dockerfile: ./docker_env/go/Dockerfile
     container_name: notification_service
     restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "5"
     depends_on:
       notification_db:
         condition: service_healthy

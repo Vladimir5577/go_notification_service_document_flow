@@ -23,9 +23,12 @@ CREATE TABLE users (
 CREATE TABLE notification (
     id          BIGSERIAL PRIMARY KEY,
     type        VARCHAR(50) NOT NULL,
-    title       VARCHAR(255) NOT NULL,
+    -- title/link — генерируемый из событий текст (имена задач, колонок, ссылки).
+    -- Держим TEXT, а не VARCHAR(n): у Postgres нет разницы в скорости, но нет и
+    -- класса ошибок "value too long", который ронял сервис (SQLSTATE 22001).
+    title       TEXT NOT NULL,
     message     TEXT,
-    link        VARCHAR(512),
+    link        TEXT,
     created_at  TIMESTAMPTZ(0) NOT NULL DEFAULT NOW(),
     read_at     TIMESTAMPTZ(0),
     extra       JSON,
