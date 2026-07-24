@@ -93,10 +93,10 @@ func (s *NotificationService) buildTitleMessageLink(evt events.KanbanNotificatio
 			title = fmt.Sprintf("Вам назначена задача: %s", taskTitle)
 		}
 	case "task_moved":
-		title = fmt.Sprintf("%s переместил задачу %s из колонки «%s» в колонку «%s»",
+		title = fmt.Sprintf("%s переместил(а) задачу %s из колонки «%s» в колонку «%s»",
 			authorName, taskTitle, fromColumn, toColumn)
 	case "comment_added":
-		title = fmt.Sprintf("%s оставил комментарий к задаче %s", authorName, taskTitle)
+		title = fmt.Sprintf("%s оставил(а) комментарий к задаче %s", authorName, taskTitle)
 	case "subtask_assigned":
 		title = fmt.Sprintf("Вам назначена подзадача: %s", taskTitle)
 	case "project_user_added":
