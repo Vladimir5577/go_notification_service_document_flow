@@ -2,8 +2,11 @@ package repository
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -76,6 +79,10 @@ func (r *NotificationRepository) MarkAllAsReadForUser(ctx context.Context, userI
 	return queries.MarkAllAsReadForUser(ctx, userID)
 }
 
+// Create вставляет уведомление. Повтор того же события для того же получателя
+// (ретрай продюсера, redelivery после nack) новой строки не создаёт: запрос
+// стоит ON CONFLICT DO NOTHING, и тогда возвращается (nil, nil) — это успех,
+// а не ошибка. Иначе сообщение ушло бы в бесконечный повтор в тот же конфликт.
 func (r *NotificationRepository) Create(ctx context.Context, n *model.Notification) (*model.Notification, error) {
 	queries := dbgen.New(r.Db)
 
@@ -101,8 +108,22 @@ func (r *NotificationRepository) Create(ctx context.Context, n *model.Notificati
 		readAt = pgtype.Timestamptz{Time: *n.ReadAt, Valid: true}
 	}
 
+	var eventID pgtype.UUID
+	if n.EventID != "" {
+		if err := eventID.Scan(n.EventID); err != nil {
+			return nil, fmt.Errorf("event_id %q: %w", n.EventID, err)
+		}
+	}
+
+	var typeLabel pgtype.Text
+	if n.TypeLabel != "" {
+		typeLabel = pgtype.Text{String: n.TypeLabel, Valid: true}
+	}
+
 	dbNotif, err := queries.CreateNotification(ctx, dbgen.CreateNotificationParams{
+		EventID:   eventID,
 		Type:      n.Type,
+		TypeLabel: typeLabel,
 		Title:     n.Title,
 		Message:   msg,
 		Link:      link,
@@ -112,6 +133,9 @@ func (r *NotificationRepository) Create(ctx context.Context, n *model.Notificati
 		UserID:    n.UserID,
 	})
 	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
 		return nil, err
 	}
 
@@ -135,6 +159,16 @@ func mapDBNotification(db *dbgen.Notification) *model.Notification {
 		UserID: db.UserID,
 	}
 
+	if db.EventID.Valid {
+		if s, err := db.EventID.Value(); err == nil && s != nil {
+			if str, ok := s.(string); ok {
+				n.EventID = str
+			}
+		}
+	}
+	if db.TypeLabel.Valid {
+		n.TypeLabel = db.TypeLabel.String
+	}
 	if db.Message.Valid {
 		n.Message = &db.Message.String
 	}

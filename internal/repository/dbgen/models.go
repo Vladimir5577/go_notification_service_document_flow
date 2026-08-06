@@ -18,6 +18,8 @@ type Notification struct {
 	ReadAt    pgtype.Timestamptz `json:"read_at"`
 	Extra     []byte             `json:"extra"`
 	UserID    int64              `json:"user_id"`
+	EventID   pgtype.UUID        `json:"event_id"`
+	TypeLabel pgtype.Text        `json:"type_label"`
 }
 
 type User struct {

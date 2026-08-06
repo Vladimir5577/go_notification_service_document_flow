@@ -42,7 +42,9 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 
 	notificationHandler := handler.NewNotificationHandler(notificationRepo)
 
-	notificationSvc := service.NewNotificationService(notificationRepo, cfg.Clock)
+	// userRepo сервису нужен, чтобы отсеивать получателей, которых нет в
+	// справочнике: такое уведомление никто никогда не увидит.
+	notificationSvc := service.NewNotificationService(notificationRepo, userRepo, cfg.Clock)
 	kanbanNotifConsumer := notifications.NewConsumer(cfg, notificationSvc)
 
 	r := setupRouter(notificationHandler, authMw)

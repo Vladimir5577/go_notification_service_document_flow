@@ -23,7 +23,7 @@ func (q *Queries) CountAllForUser(ctx context.Context, userID int64) (int64, err
 }
 
 const countUnreadForUser = `-- name: CountUnreadForUser :one
-SELECT COUNT(*) FROM notification 
+SELECT COUNT(*) FROM notification
 WHERE user_id = $1 AND read_at IS NULL
 `
 
@@ -35,13 +35,16 @@ func (q *Queries) CountUnreadForUser(ctx context.Context, userID int64) (int64, 
 }
 
 const createNotification = `-- name: CreateNotification :one
-INSERT INTO notification (type, title, message, link, created_at, read_at, extra, user_id)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-RETURNING id, type, title, message, link, created_at, read_at, extra, user_id
+INSERT INTO notification (event_id, type, type_label, title, message, link, created_at, read_at, extra, user_id)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+ON CONFLICT (event_id, user_id) WHERE event_id IS NOT NULL DO NOTHING
+RETURNING id, type, title, message, link, created_at, read_at, extra, user_id, event_id, type_label
 `
 
 type CreateNotificationParams struct {
+	EventID   pgtype.UUID        `json:"event_id"`
 	Type      string             `json:"type"`
+	TypeLabel pgtype.Text        `json:"type_label"`
 	Title     string             `json:"title"`
 	Message   pgtype.Text        `json:"message"`
 	Link      pgtype.Text        `json:"link"`
@@ -51,9 +54,15 @@ type CreateNotificationParams struct {
 	UserID    int64              `json:"user_id"`
 }
 
+// Повтор события (ретрай продюсера, redelivery после nack) не должен давать
+// второе уведомление. Предикат WHERE обязателен: индекс частичный, без него
+// Postgres не выведет его для ON CONFLICT. При конфликте строка не
+// возвращается — репозиторий трактует это как «уже создано», а не как ошибку.
 func (q *Queries) CreateNotification(ctx context.Context, arg CreateNotificationParams) (Notification, error) {
 	row := q.db.QueryRow(ctx, createNotification,
+		arg.EventID,
 		arg.Type,
+		arg.TypeLabel,
 		arg.Title,
 		arg.Message,
 		arg.Link,
@@ -73,12 +82,14 @@ func (q *Queries) CreateNotification(ctx context.Context, arg CreateNotification
 		&i.ReadAt,
 		&i.Extra,
 		&i.UserID,
+		&i.EventID,
+		&i.TypeLabel,
 	)
 	return i, err
 }
 
 const findAllForUser = `-- name: FindAllForUser :many
-SELECT id, type, title, message, link, created_at, read_at, extra, user_id
+SELECT id, type, title, message, link, created_at, read_at, extra, user_id, event_id, type_label
 FROM notification
 WHERE user_id = $1
 ORDER BY created_at DESC
@@ -110,6 +121,8 @@ func (q *Queries) FindAllForUser(ctx context.Context, arg FindAllForUserParams) 
 			&i.ReadAt,
 			&i.Extra,
 			&i.UserID,
+			&i.EventID,
+			&i.TypeLabel,
 		); err != nil {
 			return nil, err
 		}
@@ -122,7 +135,7 @@ func (q *Queries) FindAllForUser(ctx context.Context, arg FindAllForUserParams) 
 }
 
 const findLatestForUser = `-- name: FindLatestForUser :many
-SELECT id, type, title, message, link, created_at, read_at, extra, user_id
+SELECT id, type, title, message, link, created_at, read_at, extra, user_id, event_id, type_label
 FROM notification
 WHERE user_id = $1 AND read_at IS NULL
 ORDER BY created_at DESC
@@ -153,6 +166,8 @@ func (q *Queries) FindLatestForUser(ctx context.Context, arg FindLatestForUserPa
 			&i.ReadAt,
 			&i.Extra,
 			&i.UserID,
+			&i.EventID,
+			&i.TypeLabel,
 		); err != nil {
 			return nil, err
 		}

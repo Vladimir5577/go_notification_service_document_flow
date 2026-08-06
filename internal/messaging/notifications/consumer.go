@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"runtime/debug"
 	"strings"
 	"time"
 
@@ -82,15 +83,19 @@ func (c *Consumer) consume(ctx context.Context) error {
 		return fmt.Errorf("declare queue: %w", err)
 	}
 
-	// Bind to all kanban.notification.* events
-	routingKeys := []string{
-		"kanban.notification.*",
-	}
+	// Одна привязка на все модули-источники: <модуль>.notification.<событие>.
+	//
+	// Не `*.notification.*`: в RabbitMQ `*` — ровно одно слово между точками,
+	// и составное событие (document.notification.status.changed) под такую
+	// маску не попадёт, а topic exchange выбросит его молча. `#` — любое
+	// число слов.
+	//
+	// Захардкоженный список ключей стоил тринадцати дней тишины по закупкам:
+	// модуль публиковал, привязки не было, следов не осталось нигде.
+	const routingKey = "*.notification.#"
 
-	for _, rk := range routingKeys {
-		if err := ch.QueueBind(q.Name, rk, c.exchange, false, nil); err != nil {
-			return fmt.Errorf("bind %s: %w", rk, err)
-		}
+	if err := ch.QueueBind(q.Name, routingKey, c.exchange, false, nil); err != nil {
+		return fmt.Errorf("bind %s: %w", routingKey, err)
 	}
 
 	if err := ch.Qos(c.prefetchCount, 0, false); err != nil {
@@ -132,27 +137,41 @@ func (c *Consumer) consume(ctx context.Context) error {
 
 var errInvalidMessage = errors.New("invalid kanban notification message")
 
+// Сколько раз пытаемся пережить временную ошибку, не выпуская сообщение из рук,
+// и пауза между попытками. 5 попыток по 15 секунд — это минута ожидания, за
+// которую перезапуск базы или переключение на реплику успевают закончиться.
+//
+// Пока обработчик ждёт, сообщения просто лежат в очереди: не теряются, не
+// крутятся, никого не греют. Единственная плата — задержка уведомления на
+// время сбоя, для колокольчика несущественная.
+//
+// ponytail: фиксированный интервал, не экспонента. Подкрутить обе константы —
+// дело одной строки, когда станет видно реальное поведение базы.
+const (
+	temporaryAttempts = 5
+	temporaryInterval = 15 * time.Second
+)
+
 func (c *Consumer) handleDelivery(ctx context.Context, delivery amqp.Delivery) {
-	if err := c.processDelivery(ctx, delivery); err != nil {
-		// Постоянные ошибки (битый JSON, слишком длинное значение, нарушение
-		// constraint) повтором не лечатся — сколько ни возвращай в очередь,
-		// результат тот же. Requeue такого сообщения = бесконечный цикл, ровно
-		// он и уронил сервис. Убираем из очереди: Nack(requeue=false) отправит
-		// его в dead-letter exchange (если задана политика) либо отбросит.
+	err := c.safeProcess(ctx, delivery)
+
+	if err != nil {
+		// Requeue не делаем ни при какой ошибке. Постоянные (битый JSON,
+		// нарушение контракта, constraint) повтором не лечатся, а временные
+		// уже пережили минуту попыток. Именно бесконечный requeue когда-то
+		// и уронил сервис. Nack(requeue=false) отправит сообщение в
+		// events.dlx — политика dlx-go на очередь настроена.
 		if isPermanent(err) {
-			slog.Error("kanban notification событие необрабатываемо, снято с очереди",
+			slog.Error("событие необрабатываемо, снято с очереди",
 				"routing_key", delivery.RoutingKey, "error", err, "body", bodyPreview(delivery.Body))
-			if nackErr := delivery.Nack(false, false); nackErr != nil {
-				slog.Error("Не удалось снять сообщение с очереди RabbitMQ", "error", nackErr)
-			}
-			return
+		} else {
+			slog.Error("событие не обработано за все попытки, снято с очереди",
+				"routing_key", delivery.RoutingKey, "attempts", temporaryAttempts,
+				"error", err, "body", bodyPreview(delivery.Body))
 		}
 
-		// Временная ошибка (например, БД недоступна) — возвращаем на повтор.
-		slog.Warn("kanban notification событие: временная ошибка, будет повторено",
-			"routing_key", delivery.RoutingKey, "error", err)
-		if nackErr := delivery.Nack(false, true); nackErr != nil {
-			slog.Error("Не удалось вернуть сообщение в RabbitMQ", "error", nackErr)
+		if nackErr := delivery.Nack(false, false); nackErr != nil {
+			slog.Error("Не удалось снять сообщение с очереди RabbitMQ", "error", nackErr)
 		}
 		return
 	}
@@ -162,10 +181,69 @@ func (c *Consumer) handleDelivery(ctx context.Context, delivery amqp.Delivery) {
 	}
 }
 
+// safeProcess обрабатывает доставку с повторами и ловит панику.
+//
+// Паника опаснее любой ошибки: непойманная, она убивает процесс целиком,
+// сообщение остаётся неподтверждённым, RabbitMQ возвращает его в очередь — и
+// после перезапуска сервис падает на нём снова. Такой цикл не лечится никакой
+// политикой повторов, а консьюмер работает в своей горутине, где HTTP-мидлварь
+// его не прикрывает.
+//
+// Превращаем панику в постоянную ошибку: сообщение уедет в DLQ вместе со
+// стектрейсом в логе, а сервис продолжит работать.
+func (c *Consumer) safeProcess(ctx context.Context, delivery amqp.Delivery) (err error) {
+	defer func() {
+		if p := recover(); p != nil {
+			slog.Error("Паника при обработке события уведомления",
+				"routing_key", delivery.RoutingKey, "panic", p,
+				"stack", string(debug.Stack()))
+			err = fmt.Errorf("%w: паника: %v", errInvalidMessage, p)
+		}
+	}()
+
+	return retryTemporary(ctx, temporaryAttempts, temporaryInterval, func() error {
+		return c.processDelivery(ctx, delivery)
+	})
+}
+
+// retryTemporary повторяет do на временных ошибках. Постоянные возвращает сразу:
+// повторять битое сообщение бессмысленно, а минута ожидания на каждое такое
+// сообщение застопорила бы всю очередь.
+//
+// Повтор безопасен, потому что у события есть eventId: уже созданные уведомления
+// отсекаются по (event_id, user_id), и частично прошедшее событие не задвоится.
+func retryTemporary(ctx context.Context, attempts int, interval time.Duration, do func() error) error {
+	var err error
+
+	for attempt := 1; attempt <= attempts; attempt++ {
+		err = do()
+		if err == nil || isPermanent(err) {
+			return err
+		}
+		if attempt == attempts {
+			break
+		}
+
+		slog.Warn("временная ошибка обработки события, повтор",
+			"attempt", attempt, "of", attempts, "retry_in", interval, "error", err)
+
+		select {
+		case <-ctx.Done():
+			// Иначе выключение сервиса ждало бы все оставшиеся паузы.
+			return err
+		case <-time.After(interval):
+		}
+	}
+
+	return err
+}
+
 // isPermanent сообщает, что повтор бесполезен: сообщение отравленное
 // (poison message) и должно уйти из очереди, а не крутиться в ней.
 func isPermanent(err error) bool {
-	if errors.Is(err, errInvalidMessage) {
+	// Битый JSON и нарушение контракта (пустой title, чужой routing key) —
+	// одного класса: сколько ни повторяй, продюсер уже прислал что прислал.
+	if errors.Is(err, errInvalidMessage) || errors.Is(err, service.ErrInvalidEvent) {
 		return true
 	}
 	var pgErr *pgconn.PgError
@@ -187,23 +265,14 @@ func bodyPreview(body []byte) string {
 	return string(body)
 }
 
+// processDelivery не разбирает, из какого модуля пришло событие: тело у всех
+// одно, тип сервис собирает из routing key. Добавление модуля-источника здесь
+// не требует ни строки.
 func (c *Consumer) processDelivery(ctx context.Context, delivery amqp.Delivery) error {
-	routingKey := delivery.RoutingKey
-
-	if strings.HasPrefix(routingKey, "kanban.notification.") {
-		var evt events.KanbanNotificationEvent
-		if err := json.Unmarshal(delivery.Body, &evt); err != nil {
-			return fmt.Errorf("%w: %w", errInvalidMessage, err)
-		}
-		if err := c.svc.CreateFromKanbanEvent(ctx, evt); err != nil {
-			return err
-		}
-		return nil
+	var evt events.NotificationEvent
+	if err := json.Unmarshal(delivery.Body, &evt); err != nil {
+		return fmt.Errorf("%w: %w", errInvalidMessage, err)
 	}
 
-	// Future: document.* etc.
-	// if strings.HasPrefix(routingKey, "document.notification.") { ... }
-
-	slog.Debug("Unhandled notification routing key", "routing", routingKey)
-	return nil
+	return c.svc.CreateFromEvent(ctx, delivery.RoutingKey, evt)
 }

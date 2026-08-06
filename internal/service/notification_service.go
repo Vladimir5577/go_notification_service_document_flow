@@ -3,10 +3,10 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/url"
-	"strconv"
 	"strings"
 
 	"notification_service_document_flow/internal/helper"
@@ -15,235 +15,225 @@ import (
 	"notification_service_document_flow/internal/repository"
 )
 
-// NotificationService handles creation of notifications from events.
-type NotificationService struct {
-	repo  *repository.NotificationRepository
-	clock helper.Clock
-}
+// ErrInvalidEvent — событие нарушает контракт. Повтором не лечится: консьюмер
+// снимет такое сообщение с очереди вместо бесконечного requeue.
+var ErrInvalidEvent = errors.New("invalid notification event")
 
-func NewNotificationService(repo *repository.NotificationRepository, clk helper.Clock) *NotificationService {
-	return &NotificationService{repo: repo, clock: clk}
-}
+// Ограничение колонки notification.type. Длиннее — почти наверняка мусорный
+// routing key, а не настоящий модуль. Обрезать молча нельзя: разные события
+// схлопнулись бы в один тип.
+const maxTypeLength = 50
 
-// CreateFromKanbanEvent creates notifications for each recipient based on the event.
-// Titles/messages are built here to match Symfony's NotificationService logic.
+// NotificationService создаёт уведомления из событий любого модуля.
 //
-// Returns an error if any notification failed to be created (consumer will requeue).
-func (s *NotificationService) CreateFromKanbanEvent(ctx context.Context, evt events.KanbanNotificationEvent) error {
-	if len(evt.Recipients) == 0 {
+// Про модули он ничего не знает и знать не должен: готовый текст присылает
+// продюсер, тип собирается из routing key. Новый источник не требует здесь
+// ни строки — в этом весь смысл общего контракта.
+type NotificationService struct {
+	repo     *repository.NotificationRepository
+	userRepo *repository.UserRepository
+	clock    helper.Clock
+}
+
+func NewNotificationService(
+	repo *repository.NotificationRepository,
+	userRepo *repository.UserRepository,
+	clk helper.Clock,
+) *NotificationService {
+	return &NotificationService{repo: repo, userRepo: userRepo, clock: clk}
+}
+
+// CreateFromEvent заводит по уведомлению на каждого известного получателя.
+//
+// Возвращает ошибку, если хоть одна вставка сорвалась по временной причине —
+// консьюмер вернёт сообщение в очередь. Повторная обработка безопасна: дубли
+// отсекаются по (event_id, user_id).
+func (s *NotificationService) CreateFromEvent(ctx context.Context, routingKey string, evt events.NotificationEvent) error {
+	notifType, err := typeFromRoutingKey(routingKey)
+	if err != nil {
+		return err
+	}
+
+	if err := validateEvent(evt); err != nil {
+		return err
+	}
+
+	recipients, err := s.knownRecipients(ctx, evt.Recipients)
+	if err != nil {
+		// Справочник недоступен — причина временная, сообщение вернётся на повтор.
+		return fmt.Errorf("check recipients: %w", err)
+	}
+	if len(recipients) == 0 {
 		return nil
 	}
 
+	var extra json.RawMessage
+	if len(evt.Data) > 0 {
+		if raw, err := json.Marshal(evt.Data); err == nil {
+			extra = raw
+		} else {
+			slog.Warn("не удалось сериализовать data события", "event_id", evt.EventID, "error", err)
+		}
+	}
+
+	link := normalizeLink(evt.Link)
+	createdAt := s.clock.Now()
+
 	var firstErr error
-
-	for _, recipientID := range evt.Recipients {
-		title, message, link := s.buildTitleMessageLink(evt)
-
-		createdAt := s.clock.Now()
-
-		notification := &model.Notification{
-			Type:      mapEventTypeToDB(evt.Type),
-			Title:     title,
-			Message:   message,
+	for _, recipientID := range recipients {
+		created, err := s.repo.Create(ctx, &model.Notification{
+			EventID:   evt.EventID,
+			Type:      notifType,
+			TypeLabel: evt.TypeLabel,
+			Title:     evt.Title,
+			Message:   evt.Message,
 			Link:      link,
 			CreatedAt: createdAt,
-			ReadAt:    nil,
 			UserID:    recipientID,
-		}
-
-		// Store extra from event data if present (for future use / frontend)
-		if len(evt.Data) > 0 {
-			if extraBytes, err := json.Marshal(evt.Data); err == nil {
-				notification.Extra = extraBytes
-			}
-		}
-
-		if _, err := s.repo.Create(ctx, notification); err != nil {
-			slog.Error("Failed to create notification", "user_id", recipientID, "type", evt.Type, "error", err)
+			Extra:     extra,
+		})
+		if err != nil {
+			slog.Error("не удалось создать уведомление",
+				"event_id", evt.EventID, "type", notifType, "user_id", recipientID, "error", err)
 			if firstErr == nil {
 				firstErr = err
 			}
-		} else {
-			slog.Info("Notification created", "user_id", recipientID, "type", evt.Type, "title", title)
+			continue
 		}
+		if created == nil {
+			// Повтор того же события — строка уже есть, это норма, а не ошибка.
+			slog.Debug("дубль события пропущен",
+				"event_id", evt.EventID, "type", notifType, "user_id", recipientID)
+			continue
+		}
+
+		slog.Info("уведомление создано",
+			"event_id", evt.EventID, "type", notifType, "user_id", recipientID, "title", evt.Title)
 	}
 
 	return firstErr
 }
 
-func (s *NotificationService) buildTitleMessageLink(evt events.KanbanNotificationEvent) (string, *string, *string) {
-	data := evt.Data
-	authorName := getString(data, "authorName", "")
-	taskTitle := getString(data, "taskTitle", getString(data, "cardTitle", ""))
-	boardTitle := getString(data, "boardTitle", "")
-	fromColumn := getString(data, "fromColumnTitle", getString(data, "fromColumn", ""))
-	toColumn := getString(data, "toColumnTitle", getString(data, "toColumn", ""))
-	projectName := getString(data, "projectName", "")
+// typeFromRoutingKey собирает тип для базы из ключа. Модуль и событие в теле
+// не дублируются, чтобы продюсер не мог разойтись сам с собой.
+//
+//	purchase.notification.submitted       → PURCHASE_SUBMITTED
+//	document.notification.status.changed  → DOCUMENT_STATUS_CHANGED
+func typeFromRoutingKey(routingKey string) (string, error) {
+	const marker = ".notification."
 
-	var title string
-	var msg *string
+	i := strings.Index(routingKey, marker)
+	if i <= 0 || i+len(marker) >= len(routingKey) {
+		return "", fmt.Errorf("%w: routing key %q не вида <модуль>.notification.<событие>",
+			ErrInvalidEvent, routingKey)
+	}
 
-	switch evt.Type {
-	case "card_created":
-		title = fmt.Sprintf("Новая задача «%s» на доске «%s»", taskTitle, boardTitle)
-	case "task_assigned":
-		if isSubtask(data) {
-			title = fmt.Sprintf("Вам назначена подзадача: %s", taskTitle)
+	module, event := routingKey[:i], routingKey[i+len(marker):]
+	if strings.Contains(module, ".") {
+		return "", fmt.Errorf("%w: в routing key %q модуль должен быть одним словом",
+			ErrInvalidEvent, routingKey)
+	}
+
+	typ := strings.ToUpper(module + "_" + strings.NewReplacer(".", "_", "-", "_").Replace(event))
+	if len(typ) > maxTypeLength {
+		return "", fmt.Errorf("%w: тип %q длиннее %d символов (routing key %q)",
+			ErrInvalidEvent, typ, maxTypeLength, routingKey)
+	}
+
+	return typ, nil
+}
+
+// validateEvent ловит нарушения контракта на входе. Контракт слабее компилятора:
+// раньше забытый case давал заголовок из default, теперь забытое поле дало бы
+// пустое уведомление в колокольчике — и опять молча.
+func validateEvent(evt events.NotificationEvent) error {
+	if strings.TrimSpace(evt.EventID) == "" {
+		return fmt.Errorf("%w: пустой eventId", ErrInvalidEvent)
+	}
+	if strings.TrimSpace(evt.Title) == "" {
+		return fmt.Errorf("%w: пустой title (event_id %s)", ErrInvalidEvent, evt.EventID)
+	}
+	if len(evt.Recipients) == 0 {
+		return fmt.Errorf("%w: пустой recipients (event_id %s)", ErrInvalidEvent, evt.EventID)
+	}
+	return nil
+}
+
+// knownRecipients оставляет только тех, кто есть в справочнике, попутно убирая
+// повторы. Справочник — реплика пользователей монолита, её наполняет user sync;
+// id из чужой нумерации создал бы уведомление, которое никто никогда не увидит.
+func (s *NotificationService) knownRecipients(ctx context.Context, ids []int64) ([]int64, error) {
+	unique := make([]int64, 0, len(ids))
+	seen := make(map[int64]struct{}, len(ids))
+	for _, id := range ids {
+		if id <= 0 {
+			continue
+		}
+		if _, dup := seen[id]; dup {
+			continue
+		}
+		seen[id] = struct{}{}
+		unique = append(unique, id)
+	}
+	if len(unique) == 0 {
+		return nil, nil
+	}
+
+	users, err := s.userRepo.GetUsersByIDs(ctx, unique)
+	if err != nil {
+		return nil, err
+	}
+
+	known := make(map[int64]struct{}, len(users))
+	for _, u := range users {
+		known[u.ID] = struct{}{}
+	}
+
+	result := make([]int64, 0, len(unique))
+	var unknown []int64
+	for _, id := range unique {
+		if _, ok := known[id]; ok {
+			result = append(result, id)
 		} else {
-			title = fmt.Sprintf("Вам назначена задача: %s", taskTitle)
+			unknown = append(unknown, id)
 		}
-	case "task_moved":
-		title = fmt.Sprintf("%s переместил(а) задачу %s из колонки «%s» в колонку «%s»",
-			authorName, taskTitle, fromColumn, toColumn)
-	case "comment_added":
-		title = fmt.Sprintf("%s оставил(а) комментарий к задаче %s", authorName, taskTitle)
-	case "subtask_assigned":
-		title = fmt.Sprintf("Вам назначена подзадача: %s", taskTitle)
-	case "project_user_added":
-		title = fmt.Sprintf("Вас добавили в проект «%s»", projectName)
-	case "project_user_removed":
-		title = fmt.Sprintf("Вас исключили из проекта «%s»", projectName)
-	default:
-		title = getString(data, "title", "Уведомление")
 	}
 
-	linkStr := getString(data, "link", "")
-	if linkStr != "" {
-		return title, msg, normalizeLink(linkStr)
+	if len(unknown) > 0 {
+		slog.Warn("получатели неизвестны справочнику, уведомления не созданы", "user_ids", unknown)
 	}
-	return title, msg, nil
+
+	return result, nil
 }
 
-func mapEventTypeToDB(eventType string) string {
-	switch eventType {
-	case "card_created":
-		return "KANBAN_CARD_CREATED"
-	case "task_assigned":
-		return "KANBAN_TASK_ASSIGNED_TO_USER"
-	case "task_moved":
-		return "TASK_MOVED"
-	case "comment_added":
-		return "TASK_COMMENT_ADDED"
-	case "subtask_assigned":
-		return "KANBAN_TASK_ASSIGNED_TO_USER"
-	case "project_user_added":
-		return "USER_ADDED_TO_KANBAN_PROJECT"
-	case "project_user_removed":
-		return "USER_REMOVED_FROM_KANBAN_PROJECT"
-	default:
-		return strings.ToUpper(eventType)
-	}
-}
-
-func normalizeLink(raw string) *string {
-	if raw == "" || raw == "#" {
+// normalizeLink оставляет от ссылки только путь с query.
+//
+// Уведомление ведёт внутрь портала, а абсолютный адрес из события был бы
+// готовым редиректом на чужой сайт по клику из колокольчика.
+//
+// Прежняя версия ещё и переписывала легаси-адреса монолита (/kanban_board/12,
+// /document_view/45) в маршруты SPA. Это больше не нужно: продюсеры общего
+// контракта присылают готовый маршрут, а монолитные источники уходят.
+func normalizeLink(raw *string) *string {
+	if raw == nil {
 		return nil
 	}
 
-	// Document links (legacy Symfony -> SPA)
-	if link := mapDocumentViewLink(raw, "/view_incoming_document", "/document-in"); link != nil {
-		return link
-	}
-	if link := mapDocumentViewLink(raw, "/view_outgoing_document", "/document-out"); link != nil {
-		return link
-	}
-
-	// Kanban project legacy link
-	if strings.HasPrefix(raw, "/kanban_project/") {
-		idStr := strings.TrimPrefix(raw, "/kanban_project/")
-		if id, err := strconv.Atoi(idStr); err == nil && id > 0 {
-			s := fmt.Sprintf("/projects/%d/edit", id)
-			return &s
-		}
-		return &raw
-	}
-
-	// Kanban board links (support both /kanban/board/ and legacy /kanban_board/)
-	if strings.Contains(raw, "/kanban/board/") || strings.Contains(raw, "/kanban_board/") {
-		// Extract board id
-		boardID := 0
-		if idx := strings.LastIndex(raw, "/board/"); idx != -1 {
-			if id, err := strconv.Atoi(raw[idx+7:]); err == nil {
-				boardID = id
-			}
-		} else if idx := strings.LastIndex(raw, "/kanban_board/"); idx != -1 {
-			if id, err := strconv.Atoi(raw[idx+14:]); err == nil {
-				boardID = id
-			}
-		}
-
-		if boardID > 0 {
-			// We don't have easy access to project ID here without DB lookup.
-			// Modern events from Kanban service usually send good /projects/... links already.
-			// Keep board param for SPA.
-			s := fmt.Sprintf("/projects?board=%d", boardID)
-
-			// Preserve card or task if present in query or fragment
-			if u, err := url.Parse(raw); err == nil {
-				if card := u.Query().Get("card"); card != "" {
-					s += "&task=" + card
-				} else if task := u.Query().Get("task"); task != "" {
-					s += "&task=" + task
-				}
-				if u.Fragment != "" {
-					s += "#" + u.Fragment
-				}
-			}
-			return &s
-		}
-	}
-
-	// General kanban prefix cleanup (fallback)
-	if strings.Contains(raw, "/kanban/") {
-		normalized := strings.Replace(raw, "/kanban/", "/projects/", 1)
-		return &normalized
-	}
-
-	return &raw
-}
-
-func mapDocumentViewLink(raw, legacySegment, spaBase string) *string {
-	if !strings.Contains(raw, legacySegment) {
+	s := strings.TrimSpace(*raw)
+	if s == "" {
 		return nil
 	}
 
-	parts := strings.Split(raw, legacySegment+"/")
-	if len(parts) < 2 {
+	u, err := url.Parse(s)
+	if err != nil || !strings.HasPrefix(u.Path, "/") {
+		slog.Warn("ссылка события отброшена: ожидался путь внутри портала", "link", s)
 		return nil
 	}
 
-	docPart := parts[1]
-	docID := strings.Split(docPart, "?")[0]
-	docID = strings.Split(docID, "#")[0]
-
-	if docID == "" {
-		return nil
+	path := u.Path
+	if u.RawQuery != "" {
+		path += "?" + u.RawQuery
 	}
 
-	result := spaBase + "?doc=" + docID
-
-	// preserve fragment if any
-	if idx := strings.Index(raw, "#"); idx != -1 {
-		result += raw[idx:]
-	}
-
-	return &result
-}
-
-func getString(m map[string]any, key string, fallback string) string {
-	if v, ok := m[key]; ok {
-		if s, ok := v.(string); ok {
-			return s
-		}
-	}
-	return fallback
-}
-
-func isSubtask(data map[string]any) bool {
-	if v, ok := data["isSubtask"]; ok {
-		if b, ok := v.(bool); ok {
-			return b
-		}
-	}
-	return false
+	return &path
 }

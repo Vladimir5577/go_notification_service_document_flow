@@ -64,12 +64,11 @@ func (h *NotificationHandler) List(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp := dto.ListResponse{
-		Items:                items,
-		Page:                 page,
-		PageSize:             pageSize,
-		Total:                total,
-		UnreadCount:          unread,
-		UnreadDocumentsCount: 0, // TODO: implement when document events arrive
+		Items:       items,
+		Page:        page,
+		PageSize:    pageSize,
+		Total:       total,
+		UnreadCount: unread,
 	}
 
 	helper.WriteJSON(w, http.StatusOK, resp)
@@ -103,9 +102,8 @@ func (h *NotificationHandler) Latest(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp := dto.LatestResponse{
-		UnreadCount:          unread,
-		UnreadDocumentsCount: 0,
-		Notifications:        items,
+		UnreadCount:   unread,
+		Notifications: items,
 	}
 
 	helper.WriteJSON(w, http.StatusOK, resp)

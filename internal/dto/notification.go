@@ -18,18 +18,16 @@ type NotificationResponse struct {
 }
 
 type ListResponse struct {
-	Items              []NotificationResponse `json:"items"`
-	Page               int                    `json:"page"`
-	PageSize           int                    `json:"pageSize"`
-	Total              int                    `json:"total"`
-	UnreadCount        int                    `json:"unreadCount"`
-	UnreadDocumentsCount int                  `json:"unreadDocumentsCount"`
+	Items       []NotificationResponse `json:"items"`
+	Page        int                    `json:"page"`
+	PageSize    int                    `json:"pageSize"`
+	Total       int                    `json:"total"`
+	UnreadCount int                    `json:"unreadCount"`
 }
 
 type LatestResponse struct {
-	UnreadCount          int                    `json:"unreadCount"`
-	UnreadDocumentsCount int                    `json:"unreadDocumentsCount"`
-	Notifications        []NotificationResponse `json:"notifications"`
+	UnreadCount   int                    `json:"unreadCount"`
+	Notifications []NotificationResponse `json:"notifications"`
 }
 
 func ToNotificationResponse(n model.Notification) NotificationResponse {
@@ -37,39 +35,18 @@ func ToNotificationResponse(n model.Notification) NotificationResponse {
 	createdAt := n.CreatedAt.UTC().Format(time.RFC3339)
 	isRead := n.ReadAt != nil
 
+	// TypeLabel приходит от продюсера вместе с текстом и лежит в строке.
+	// Раньше здесь стоял switch по типам — по case на каждое событие каждого
+	// модуля; строкам, созданным до перехода, подписи проставила миграция
+	// 00002 по тому же словарю.
 	return NotificationResponse{
 		ID:        n.ID,
 		Type:      n.Type,
-		TypeLabel: mapTypeToLabel(n.Type),
+		TypeLabel: n.TypeLabel,
 		Title:     n.Title,
 		Message:   n.Message,
 		Link:      n.Link,
 		IsRead:    isRead,
 		CreatedAt: createdAt,
-	}
-}
-
-func mapTypeToLabel(typ string) string {
-	switch typ {
-	case "DOCUMENT_SENT":
-		return "Документ отправлен"
-	case "NEW_INCOMING_DOCUMENT":
-		return "Новый входящий документ"
-	case "KANBAN_TASK_ASSIGNED_TO_USER", "TASK_ASSIGNED":
-		return "Назначена задача"
-	case "KANBAN_CARD_CREATED":
-		return "Создана задача"
-	case "USER_ADDED_TO_KANBAN_PROJECT":
-		return "Добавлен в проект"
-	case "USER_REMOVED_FROM_KANBAN_PROJECT":
-		return "Исключён из проекта"
-	case "TASK_MOVED":
-		return "Задача перемещена"
-	case "TASK_COMMENT_ADDED":
-		return "Новый комментарий в задаче"
-	case "DOCUMENT_COMMENT_ADDED":
-		return "Новый комментарий к документу"
-	default:
-		return "Уведомление"
 	}
 }
