@@ -102,7 +102,7 @@ func ConnectDB(conf *Config) (*pgxpool.Pool, error) {
 // The application should exit immediately in this case instead of starting
 // consumers that will spam retry errors.
 func ValidateSchema(db *pgxpool.Pool) error {
-	requiredTables := []string{"notification", "users"}
+	requiredTables := []string{"notification"}
 
 	for _, table := range requiredTables {
 		var exists bool
