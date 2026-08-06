@@ -69,9 +69,31 @@ docker compose -f docker-compose.dbgate.yml down
 ```
 
 ### RabbitMQ
-Сервис подписывается на exchange `events`:
-- `user.upserted`, `user.deleted` — синхронизация пользователей (Очередь: `notification.user_sync`)
-- `kanban.notification.*` — создание уведомлений
+Сервис подписывается на exchange `events` одной привязкой:
+- `*.notification.#` — уведомления от любого модуля-источника (очередь `notification.kanban_events`)
+
+Тело события общее для всех модулей, модуль и тип берутся из routing key
+`{модуль}.notification.{событие}` — в теле они не дублируются.
+
+```json
+{
+  "eventId": "018f0c3e-7a11-7c9d-9f2a-4d5b6e7f8a90",
+  "recipients": [187, 1745],
+  "title": "Новая заявка на закупку «Ноутбуки» на рассмотрении",
+  "typeLabel": "Новая заявка на закупку",
+  "message": "необязательный текст",
+  "link": "/purchases/42",
+  "actorId": 144,
+  "data": {}
+}
+```
+
+Готовый текст присылает продюсер: только модуль знает формулировки своих
+событий. Поэтому новый источник не требует правок в этом сервисе.
+
+`eventId` — uuid v7, один на событие, переиспользуется при повторной отправке:
+по нему отсекаются дубли (`event_id`, `user_id`). Полное описание полей —
+`internal/messaging/events/notification.go`.
 
 ## Работа со временем
 

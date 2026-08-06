@@ -21,14 +21,3 @@ type Notification struct {
 	EventID   pgtype.UUID        `json:"event_id"`
 	TypeLabel pgtype.Text        `json:"type_label"`
 }
-
-type User struct {
-	ID         int64              `json:"id"`
-	Login      string             `json:"login"`
-	Lastname   string             `json:"lastname"`
-	Firstname  string             `json:"firstname"`
-	Patronymic pgtype.Text        `json:"patronymic"`
-	AvatarName pgtype.Text        `json:"avatar_name"`
-	DeletedAt  pgtype.Timestamptz `json:"deleted_at"`
-	SyncedAt   pgtype.Timestamptz `json:"synced_at"`
-}

@@ -21,7 +21,6 @@ type Config struct {
 
 	RabbitMQDSN      string
 	RabbitMQExchange string
-	UserSyncQueue    string
 
 	// DB configuration
 	DBHost     string
@@ -47,7 +46,6 @@ func Load() *Config {
 
 		RabbitMQDSN:      getEnv("RABBITMQ_TRANSPORT_DSN", "amqp://guest:guest@rabbitmq:5672/"),
 		RabbitMQExchange: getEnv("RABBITMQ_EVENTS_EXCHANGE", "events"),
-		UserSyncQueue:    getEnv("RABBITMQ_USER_SYNC_QUEUE", "notification.user_sync"),
 
 		DBHost:     getEnv("DB_HOST", "localhost"),
 		DBPort:     getEnvAsInt("DB_PORT", 5432),
@@ -145,4 +143,3 @@ func getEnvAsInt(key string, fallback int) int {
 func (c *Config) Now() time.Time {
 	return c.Clock.Now()
 }
-

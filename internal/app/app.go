@@ -14,7 +14,6 @@ import (
 	"notification_service_document_flow/internal/config"
 	"notification_service_document_flow/internal/handler"
 	"notification_service_document_flow/internal/messaging/notifications"
-	"notification_service_document_flow/internal/messaging/usersync"
 	"notification_service_document_flow/internal/middleware"
 	"notification_service_document_flow/internal/repository"
 	"notification_service_document_flow/internal/service"
@@ -24,9 +23,8 @@ import (
 )
 
 type App struct {
-	router                  *chi.Mux
-	cfg                     *config.Config
-	userSyncConsumer        *usersync.Consumer
+	router                     *chi.Mux
+	cfg                        *config.Config
 	kanbanNotificationConsumer *notifications.Consumer
 }
 
@@ -36,15 +34,11 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 		return nil, fmt.Errorf("failed to init auth middleware: %w", err)
 	}
 
-	userRepo := repository.NewUserRepository(db)
-
 	notificationRepo := repository.NewNotificationRepository(db)
 
 	notificationHandler := handler.NewNotificationHandler(notificationRepo)
 
-	// userRepo сервису нужен, чтобы отсеивать получателей, которых нет в
-	// справочнике: такое уведомление никто никогда не увидит.
-	notificationSvc := service.NewNotificationService(notificationRepo, userRepo, cfg.Clock)
+	notificationSvc := service.NewNotificationService(notificationRepo, cfg.Clock)
 	kanbanNotifConsumer := notifications.NewConsumer(cfg, notificationSvc)
 
 	r := setupRouter(notificationHandler, authMw)
@@ -52,7 +46,6 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 	return &App{
 		router:                     r,
 		cfg:                        cfg,
-		userSyncConsumer:           usersync.NewConsumer(cfg, userRepo),
 		kanbanNotificationConsumer: kanbanNotifConsumer,
 	}, nil
 }
@@ -61,17 +54,6 @@ func (a *App) Run() error {
 	addr := fmt.Sprintf(":%s", a.cfg.Port)
 	appCtx, stopBackground := context.WithCancel(context.Background())
 	var backgroundWG sync.WaitGroup
-
-	// Start user sync consumer
-	if a.userSyncConsumer != nil {
-		backgroundWG.Add(1)
-		go func() {
-			defer backgroundWG.Done()
-			if err := a.userSyncConsumer.Run(appCtx); err != nil {
-				slog.Warn("User sync consumer stopped", "error", err)
-			}
-		}()
-	}
 
 	// Start Kanban notification events consumer
 	if a.kanbanNotificationConsumer != nil {

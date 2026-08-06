@@ -30,17 +30,12 @@ const maxTypeLength = 50
 // продюсер, тип собирается из routing key. Новый источник не требует здесь
 // ни строки — в этом весь смысл общего контракта.
 type NotificationService struct {
-	repo     *repository.NotificationRepository
-	userRepo *repository.UserRepository
-	clock    helper.Clock
+	repo  *repository.NotificationRepository
+	clock helper.Clock
 }
 
-func NewNotificationService(
-	repo *repository.NotificationRepository,
-	userRepo *repository.UserRepository,
-	clk helper.Clock,
-) *NotificationService {
-	return &NotificationService{repo: repo, userRepo: userRepo, clock: clk}
+func NewNotificationService(repo *repository.NotificationRepository, clk helper.Clock) *NotificationService {
+	return &NotificationService{repo: repo, clock: clk}
 }
 
 // CreateFromEvent заводит по уведомлению на каждого известного получателя.
@@ -58,11 +53,7 @@ func (s *NotificationService) CreateFromEvent(ctx context.Context, routingKey st
 		return err
 	}
 
-	recipients, err := s.knownRecipients(ctx, evt.Recipients)
-	if err != nil {
-		// Справочник недоступен — причина временная, сообщение вернётся на повтор.
-		return fmt.Errorf("check recipients: %w", err)
-	}
+	recipients := uniqueRecipients(evt.Recipients)
 	if len(recipients) == 0 {
 		return nil
 	}
@@ -159,12 +150,17 @@ func validateEvent(evt events.NotificationEvent) error {
 	return nil
 }
 
-// knownRecipients оставляет только тех, кто есть в справочнике, попутно убирая
-// повторы. Справочник — реплика пользователей монолита, её наполняет user sync;
-// id из чужой нумерации создал бы уведомление, которое никто никогда не увидит.
-func (s *NotificationService) knownRecipients(ctx context.Context, ids []int64) ([]int64, error) {
+// uniqueRecipients убирает повторы и нечисловой мусор: один человек мог попасть
+// в список дважды — например, и как автор, и как участник.
+//
+// Сверки со справочником здесь нет и быть не должно. Реплика users из сервиса
+// удалена: колокольчик её не спрашивал (пользователь берётся из JWT, уведомления
+// выбираются по user_id без join'а), а отсев по ней съедал уведомления живых
+// людей, которых просто не успел донести user sync.
+func uniqueRecipients(ids []int64) []int64 {
 	unique := make([]int64, 0, len(ids))
 	seen := make(map[int64]struct{}, len(ids))
+
 	for _, id := range ids {
 		if id <= 0 {
 			continue
@@ -175,35 +171,8 @@ func (s *NotificationService) knownRecipients(ctx context.Context, ids []int64) 
 		seen[id] = struct{}{}
 		unique = append(unique, id)
 	}
-	if len(unique) == 0 {
-		return nil, nil
-	}
 
-	users, err := s.userRepo.GetUsersByIDs(ctx, unique)
-	if err != nil {
-		return nil, err
-	}
-
-	known := make(map[int64]struct{}, len(users))
-	for _, u := range users {
-		known[u.ID] = struct{}{}
-	}
-
-	result := make([]int64, 0, len(unique))
-	var unknown []int64
-	for _, id := range unique {
-		if _, ok := known[id]; ok {
-			result = append(result, id)
-		} else {
-			unknown = append(unknown, id)
-		}
-	}
-
-	if len(unknown) > 0 {
-		slog.Warn("получатели неизвестны справочнику, уведомления не созданы", "user_ids", unknown)
-	}
-
-	return result, nil
+	return unique
 }
 
 // normalizeLink оставляет от ссылки только путь с query.

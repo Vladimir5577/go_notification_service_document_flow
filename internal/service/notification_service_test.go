@@ -114,3 +114,24 @@ func newEvent() events.NotificationEvent {
 		Title:      "Новая заявка на закупку «Ноутбуки» на рассмотрении",
 	}
 }
+
+// Дубли схлопываются, мусор отсеивается — но живые id не трогаются никогда.
+// Прежняя версия сверялась с репликой users и молча съедала уведомления тех,
+// кого реплика не успела получить: у неё нет ни начальной загрузки, ни ресинка.
+func TestUniqueRecipients(t *testing.T) {
+	got := uniqueRecipients([]int64{187, 1745, 187, 0, -3, 435})
+	want := []int64{187, 1745, 435}
+
+	if len(got) != len(want) {
+		t.Fatalf("получили %v, ожидали %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("получили %v, ожидали %v (порядок важен: он же порядок вставки)", got, want)
+		}
+	}
+
+	if r := uniqueRecipients(nil); len(r) != 0 {
+		t.Errorf("пустой вход — пустой выход, получили %v", r)
+	}
+}
