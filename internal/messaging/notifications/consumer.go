@@ -50,7 +50,7 @@ func (c *Consumer) Run(ctx context.Context) error {
 			if ctx.Err() != nil {
 				return nil
 			}
-			slog.Warn("RabbitMQ consumer (kanban notifications) waiting to reconnect", "error", err)
+			slog.Warn("RabbitMQ consumer (notifications) waiting to reconnect", "error", err)
 		}
 
 		select {
@@ -102,7 +102,7 @@ func (c *Consumer) consume(ctx context.Context) error {
 		return fmt.Errorf("qos: %w", err)
 	}
 
-	deliveries, err := ch.Consume(q.Name, "notification-kanban", false, false, false, false, nil)
+	deliveries, err := ch.Consume(q.Name, "notification-events", false, false, false, false, nil)
 	if err != nil {
 		return fmt.Errorf("consume: %w", err)
 	}
@@ -110,7 +110,7 @@ func (c *Consumer) consume(ctx context.Context) error {
 	connClosed := conn.NotifyClose(make(chan *amqp.Error, 1))
 	chClosed := ch.NotifyClose(make(chan *amqp.Error, 1))
 
-	slog.Info("Kanban notification consumer запущен", "queue", q.Name)
+	slog.Info("Notification consumer запущен", "queue", q.Name, "routing_key", routingKey)
 
 	for {
 		select {
@@ -135,7 +135,9 @@ func (c *Consumer) consume(ctx context.Context) error {
 	}
 }
 
-var errInvalidMessage = errors.New("invalid kanban notification message")
+// Модуль в текст не зашиваем: консьюмер общий на все источники, а какой именно
+// прислал битое тело — видно в routing_key, который логируется рядом.
+var errInvalidMessage = errors.New("invalid notification message")
 
 // Сколько раз пытаемся пережить временную ошибку, не выпуская сообщение из рук,
 // и пауза между попытками. 5 попыток по 15 секунд — это минута ожидания, за

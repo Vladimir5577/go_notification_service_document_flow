@@ -1,5 +1,27 @@
 package events
 
+import (
+	"bytes"
+	"encoding/json"
+)
+
+// Payload — непрозрачный мешок данных события.
+//
+// Существует отдельным типом ради одной строчки в UnmarshalJSON: PHP
+// сериализует пустой ассоциативный массив как JSON-массив `[]`, а не `{}`.
+// Обычный map[string]any на таком теле падает, сообщение снимается с очереди,
+// и уведомление теряется молча. Ловушка не разовая — её повторит любой
+// следующий PHP-продюсер, поэтому терпимость живёт на стороне потребителя.
+type Payload map[string]any
+
+func (p *Payload) UnmarshalJSON(b []byte) error {
+	if bytes.Equal(bytes.TrimSpace(b), []byte("[]")) {
+		return nil
+	}
+
+	return json.Unmarshal(b, (*map[string]any)(p))
+}
+
 // NotificationEvent — общий контракт уведомления для всех модулей-источников.
 //
 // Routing key: "<модуль>.notification.<событие>", например
@@ -38,6 +60,6 @@ type NotificationEvent struct {
 	ActorID int64 `json:"actorId,omitempty"`
 
 	// Data — непрозрачный мешок, уезжает в extra как есть. Сервис его не
-	// интерпретирует.
-	Data map[string]any `json:"data,omitempty"`
+	// интерпретирует. Тип Payload, а не map, чтобы пережить пустой `[]` от PHP.
+	Data Payload `json:"data,omitempty"`
 }

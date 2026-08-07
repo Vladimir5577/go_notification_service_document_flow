@@ -23,9 +23,9 @@ import (
 )
 
 type App struct {
-	router                     *chi.Mux
-	cfg                        *config.Config
-	kanbanNotificationConsumer *notifications.Consumer
+	router               *chi.Mux
+	cfg                  *config.Config
+	notificationConsumer *notifications.Consumer
 }
 
 func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
@@ -39,14 +39,14 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 	notificationHandler := handler.NewNotificationHandler(notificationRepo)
 
 	notificationSvc := service.NewNotificationService(notificationRepo, cfg.Clock)
-	kanbanNotifConsumer := notifications.NewConsumer(cfg, notificationSvc)
+	notifConsumer := notifications.NewConsumer(cfg, notificationSvc)
 
 	r := setupRouter(notificationHandler, authMw)
 
 	return &App{
-		router:                     r,
-		cfg:                        cfg,
-		kanbanNotificationConsumer: kanbanNotifConsumer,
+		router:               r,
+		cfg:                  cfg,
+		notificationConsumer: notifConsumer,
 	}, nil
 }
 
@@ -55,13 +55,13 @@ func (a *App) Run() error {
 	appCtx, stopBackground := context.WithCancel(context.Background())
 	var backgroundWG sync.WaitGroup
 
-	// Start Kanban notification events consumer
-	if a.kanbanNotificationConsumer != nil {
+	// Consumer уведомлений: одна очередь на все модули-источники (*.notification.#)
+	if a.notificationConsumer != nil {
 		backgroundWG.Add(1)
 		go func() {
 			defer backgroundWG.Done()
-			if err := a.kanbanNotificationConsumer.Run(appCtx); err != nil {
-				slog.Warn("Kanban notification consumer stopped", "error", err)
+			if err := a.notificationConsumer.Run(appCtx); err != nil {
+				slog.Warn("Notification consumer stopped", "error", err)
 			}
 		}()
 	}
