@@ -30,12 +30,13 @@ const maxTypeLength = 50
 // продюсер, тип собирается из routing key. Новый источник не требует здесь
 // ни строки — в этом весь смысл общего контракта.
 type NotificationService struct {
-	repo  *repository.NotificationRepository
-	clock helper.Clock
+	repo   *repository.NotificationRepository
+	clock  helper.Clock
+	pinger *Pinger
 }
 
-func NewNotificationService(repo *repository.NotificationRepository, clk helper.Clock) *NotificationService {
-	return &NotificationService{repo: repo, clock: clk}
+func NewNotificationService(repo *repository.NotificationRepository, clk helper.Clock, pinger *Pinger) *NotificationService {
+	return &NotificationService{repo: repo, clock: clk, pinger: pinger}
 }
 
 // CreateFromEvent заводит по уведомлению на каждого известного получателя.
@@ -71,6 +72,7 @@ func (s *NotificationService) CreateFromEvent(ctx context.Context, routingKey st
 	createdAt := s.clock.Now()
 
 	var firstErr error
+	fresh := make([]int64, 0, len(recipients))
 	for _, recipientID := range recipients {
 		created, err := s.repo.Create(ctx, &model.Notification{
 			EventID:   evt.EventID,
@@ -100,7 +102,12 @@ func (s *NotificationService) CreateFromEvent(ctx context.Context, routingKey st
 
 		slog.Info("уведомление создано",
 			"event_id", evt.EventID, "type", notifType, "user_id", recipientID, "title", evt.Title)
+		fresh = append(fresh, recipientID)
 	}
+
+	// Пингуем и при частичной ошибке: эти строки уже в базе. Повтор события их
+	// не пропингует второй раз — дубли отсечены выше.
+	s.pinger.Ping(fresh...)
 
 	return firstErr
 }

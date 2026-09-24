@@ -57,6 +57,8 @@ services:
       - DB_PORT=5432
       # RabbitMQ живёт в общей project-net сети рядом с Symfony
       - RABBITMQ_TRANSPORT_DSN=amqp://guest:guest@rabbitmq:5672/
+      # Mercure тоже в project-net; внутри сети хаб слушает :80, а не хостовый 3000
+      - MERCURE_URL=http://mercure/.well-known/mercure
     # Не надо пробрасывать наружу. Порт пробросит сам nginx
     # ports:
     #   - "${SERVER_PORT:-8086}:8086"

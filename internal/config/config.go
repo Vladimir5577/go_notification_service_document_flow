@@ -22,6 +22,10 @@ type Config struct {
 	RabbitMQDSN      string
 	RabbitMQExchange string
 
+	// Mercure: пинги колокольчику. Секрет — тот же, что у хаба (MERCURE_JWT_SECRET Symfony).
+	MercureURL       string
+	MercureJWTSecret string
+
 	// DB configuration
 	DBHost     string
 	DBPort     int
@@ -46,6 +50,9 @@ func Load() *Config {
 
 		RabbitMQDSN:      getEnv("RABBITMQ_TRANSPORT_DSN", "amqp://guest:guest@rabbitmq:5672/"),
 		RabbitMQExchange: getEnv("RABBITMQ_EVENTS_EXCHANGE", "events"),
+
+		MercureURL:       getEnv("MERCURE_URL", "http://mercure/.well-known/mercure"),
+		MercureJWTSecret: getEnv("MERCURE_JWT_SECRET", ""),
 
 		DBHost:     getEnv("DB_HOST", "localhost"),
 		DBPort:     getEnvAsInt("DB_PORT", 5432),
