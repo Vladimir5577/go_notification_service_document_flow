@@ -37,10 +37,11 @@ func NewApp(cfg *config.Config, db *pgxpool.Pool) (*App, error) {
 	notificationRepo := repository.NewNotificationRepository(db)
 
 	pinger := service.NewPinger(cfg.MercureURL, cfg.MercureJWTSecret)
+	pusher := service.NewPusher(notificationRepo, cfg.VAPIDPublicKey, cfg.VAPIDPrivateKey, cfg.VAPIDSubject)
 
-	notificationHandler := handler.NewNotificationHandler(notificationRepo)
+	notificationHandler := handler.NewNotificationHandler(notificationRepo, cfg.VAPIDPublicKey)
 
-	notificationSvc := service.NewNotificationService(notificationRepo, cfg.Clock, pinger)
+	notificationSvc := service.NewNotificationService(notificationRepo, cfg.Clock, pinger, pusher)
 	notifConsumer := notifications.NewConsumer(cfg, notificationSvc)
 
 	r := setupRouter(notificationHandler, authMw)

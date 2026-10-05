@@ -32,6 +32,9 @@ func setupRouter(notificationHandler *handler.NotificationHandler, authMw *middl
 		r.Route("/spa/api/notifications", func(r chi.Router) {
 			r.Get("/", notificationHandler.List)
 			r.Get("/latest", notificationHandler.Latest)
+			r.Get("/push/public-key", notificationHandler.PushPublicKey)
+			r.Put("/push", notificationHandler.SavePushSubscription)
+			r.Delete("/push", notificationHandler.DeletePushSubscription)
 			r.Post("/read-all", notificationHandler.MarkAllAsRead)
 			r.Post("/{id}/read", notificationHandler.MarkAsRead)
 		})

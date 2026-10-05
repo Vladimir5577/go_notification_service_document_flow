@@ -33,10 +33,11 @@ type NotificationService struct {
 	repo   *repository.NotificationRepository
 	clock  helper.Clock
 	pinger *Pinger
+	pusher *Pusher
 }
 
-func NewNotificationService(repo *repository.NotificationRepository, clk helper.Clock, pinger *Pinger) *NotificationService {
-	return &NotificationService{repo: repo, clock: clk, pinger: pinger}
+func NewNotificationService(repo *repository.NotificationRepository, clk helper.Clock, pinger *Pinger, pusher *Pusher) *NotificationService {
+	return &NotificationService{repo: repo, clock: clk, pinger: pinger, pusher: pusher}
 }
 
 // CreateFromEvent заводит по уведомлению на каждого известного получателя.
@@ -103,6 +104,7 @@ func (s *NotificationService) CreateFromEvent(ctx context.Context, routingKey st
 		slog.Info("уведомление создано",
 			"event_id", evt.EventID, "type", notifType, "user_id", recipientID, "title", evt.Title)
 		fresh = append(fresh, recipientID)
+		s.pusher.Push(created)
 	}
 
 	// Пингуем и при частичной ошибке: эти строки уже в базе. Повтор события их
