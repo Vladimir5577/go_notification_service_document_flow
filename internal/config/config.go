@@ -26,6 +26,11 @@ type Config struct {
 	MercureURL       string
 	MercureJWTSecret string
 
+	// Web Push. Пустые ключи выключают доставку в закрытый браузер.
+	VAPIDPublicKey  string
+	VAPIDPrivateKey string
+	VAPIDSubject    string
+
 	// DB configuration
 	DBHost     string
 	DBPort     int
@@ -53,6 +58,10 @@ func Load() *Config {
 
 		MercureURL:       getEnv("MERCURE_URL", "http://mercure/.well-known/mercure"),
 		MercureJWTSecret: getEnv("MERCURE_JWT_SECRET", ""),
+
+		VAPIDPublicKey:  getEnv("VAPID_PUBLIC_KEY", ""),
+		VAPIDPrivateKey: getEnv("VAPID_PRIVATE_KEY", ""),
+		VAPIDSubject:    getEnv("VAPID_SUBJECT", "mailto:notifications@localhost"),
 
 		DBHost:     getEnv("DB_HOST", "localhost"),
 		DBPort:     getEnvAsInt("DB_PORT", 5432),

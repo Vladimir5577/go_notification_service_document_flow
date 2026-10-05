@@ -19,11 +19,12 @@ const (
 )
 
 type NotificationHandler struct {
-	repo *repository.NotificationRepository
+	repo        *repository.NotificationRepository
+	vapidPublic string
 }
 
-func NewNotificationHandler(repo *repository.NotificationRepository) *NotificationHandler {
-	return &NotificationHandler{repo: repo}
+func NewNotificationHandler(repo *repository.NotificationRepository, vapidPublic string) *NotificationHandler {
+	return &NotificationHandler{repo: repo, vapidPublic: vapidPublic}
 }
 
 func (h *NotificationHandler) List(w http.ResponseWriter, r *http.Request) {
