@@ -71,8 +71,9 @@ func (p *Pinger) Ping(userIDs ...int64) {
 // подписчику любого из топиков. Список топиков в SSE-событие не попадает, так
 // что получатели друг друга не видят.
 func (p *Pinger) publish(ctx context.Context, userIDs []int64) error {
-	// Пустой data EventSource молча не доставляет — нужен хоть какой-то текст.
-	form := url.Values{"data": {"{}"}}
+	// Пустой data EventSource молча не доставляет. Текста уведомления здесь нет:
+	// хаб anonymous, подписаться на чужой топик может кто угодно.
+	form := url.Values{"data": {`{"ping":true}`}}
 	for _, id := range userIDs {
 		form.Add("topic", "/notifications/user/"+strconv.FormatInt(id, 10))
 	}

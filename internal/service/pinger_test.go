@@ -35,8 +35,8 @@ func TestPingerPublish(t *testing.T) {
 		t.Errorf("topic = %v, ожидали %v", got.form["topic"], want)
 	}
 	// Пустой data EventSource не доставит, и пинг потеряется молча.
-	if got.form.Get("data") == "" {
-		t.Error("data пустой")
+	if got.form.Get("data") != `{"ping":true}` {
+		t.Errorf("data = %q", got.form.Get("data"))
 	}
 	// Хаб примет только токен, подписанный его секретом и с правом публикации.
 	claims := jwt.MapClaims{}
