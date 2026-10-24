@@ -126,7 +126,7 @@ func (p *Pusher) send(ctx context.Context, sub repository.PushSubscription, payl
 
 	// Браузер отозвал подписку. Повтор бессмысленен.
 	if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusGone {
-		if err := p.repo.DeletePushSubscriptionByEndpoint(context.Background(), sub.Endpoint); err != nil {
+		if err := p.repo.DeletePushSubscriptionByEndpoint(ctx, sub.Endpoint); err != nil {
 			slog.Warn("не удалось удалить протухшую push-подписку", "error", err)
 		}
 		return

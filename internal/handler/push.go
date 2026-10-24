@@ -1,6 +1,8 @@
 package handler
 
 import (
+	"crypto/elliptic"
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/url"
@@ -87,7 +89,25 @@ func decodePushSubscription(w http.ResponseWriter, r *http.Request) (repository.
 	if !validPushEndpoint(sub.Endpoint) || !validPushKey(sub.P256dh) || !validPushKey(sub.Auth) {
 		return repository.PushSubscription{}, apperr.ErrValidation
 	}
+	if _, err := decodePushKey(sub.Auth); err != nil {
+		return repository.PushSubscription{}, apperr.ErrValidation
+	}
+	dh, err := decodePushKey(sub.P256dh)
+	if err != nil {
+		return repository.PushSubscription{}, apperr.ErrValidation
+	}
+	if x, _ := elliptic.Unmarshal(elliptic.P256(), dh); x == nil {
+		return repository.PushSubscription{}, apperr.ErrValidation
+	}
 	return sub, nil
+}
+
+func decodePushKey(raw string) ([]byte, error) {
+	// Match webpush-go padding without rewriting the stored subscription.
+	if rem := len(raw) % 4; rem != 0 {
+		raw += strings.Repeat("=", 4-rem)
+	}
+	return base64.URLEncoding.DecodeString(raw)
 }
 
 func validPushEndpoint(raw string) bool {
