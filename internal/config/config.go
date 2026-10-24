@@ -31,7 +31,6 @@ type Config struct {
 	VAPIDPrivateKey string
 	VAPIDSubject    string
 
-	// DB configuration
 	DBHost     string
 	DBPort     int
 	DBUser     string

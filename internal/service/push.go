@@ -5,12 +5,14 @@ import (
 	"encoding/json"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/SherClockHolmes/webpush-go"
 
+	"notification_service_document_flow/internal/helper"
 	"notification_service_document_flow/internal/model"
 	"notification_service_document_flow/internal/repository"
 )
@@ -102,6 +104,39 @@ func (p *Pusher) payload(ctx context.Context, n *model.Notification) map[string]
 }
 
 func (p *Pusher) send(ctx context.Context, sub repository.PushSubscription, payload []byte) {
+	ips, err := helper.ResolvePushEndpoint(ctx, sub.Endpoint)
+	if err != nil {
+		slog.Warn("не удалось отправить push", "error", err)
+		return
+	}
+	transport := &http.Transport{
+		TLSHandshakeTimeout: pushTimeout,
+		ForceAttemptHTTP2:   true,
+		// Прокси и повторный DNS обошли бы проверку адресов подписки.
+		DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
+			_, port, err := net.SplitHostPort(address)
+			if err != nil {
+				return nil, err
+			}
+			dialer := net.Dialer{Timeout: pushTimeout / time.Duration(len(ips))}
+			for _, ip := range ips {
+				conn, dialErr := dialer.DialContext(ctx, network, net.JoinHostPort(ip.IP.String(), port))
+				if dialErr == nil {
+					return conn, nil
+				}
+				err = dialErr
+			}
+			return nil, err
+		},
+	}
+	defer transport.CloseIdleConnections()
+	client := &http.Client{
+		Transport: transport,
+		Timeout:   pushTimeout,
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
 	resp, err := webpush.SendNotificationWithContext(ctx, payload, &webpush.Subscription{
 		Endpoint: sub.Endpoint,
 		Keys: webpush.Keys{
@@ -109,6 +144,7 @@ func (p *Pusher) send(ctx context.Context, sub repository.PushSubscription, payl
 			Auth:   sub.Auth,
 		},
 	}, &webpush.Options{
+		HTTPClient:      client,
 		Subscriber:      p.subscriber,
 		VAPIDPublicKey:  p.publicKey,
 		VAPIDPrivateKey: p.privateKey,
@@ -126,7 +162,7 @@ func (p *Pusher) send(ctx context.Context, sub repository.PushSubscription, payl
 
 	// Браузер отозвал подписку. Повтор бессмысленен.
 	if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusGone {
-		if err := p.repo.DeletePushSubscriptionByEndpoint(context.Background(), sub.Endpoint); err != nil {
+		if err := p.repo.DeletePushSubscriptionByEndpoint(ctx, sub.Endpoint); err != nil {
 			slog.Warn("не удалось удалить протухшую push-подписку", "error", err)
 		}
 		return

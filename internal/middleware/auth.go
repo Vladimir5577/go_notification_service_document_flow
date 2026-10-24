@@ -77,7 +77,6 @@ func (m *AuthMiddleware) Handler(next http.Handler) http.Handler {
 		}, jwt.WithExpirationRequired(), jwt.WithValidMethods([]string{jwt.SigningMethodRS256.Alg()}))
 
 		if err != nil || !token.Valid {
-			// Явно 401. Самое важное — WithExpirationRequired() в Parse гарантирует проверку exp.
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusUnauthorized)
 			w.Write([]byte(`{"error":"unauthorized","code":"unauthorized"}`))
@@ -128,7 +127,6 @@ func (m *AuthMiddleware) Handler(next http.Handler) http.Handler {
 			return
 		}
 
-		// Кладем данные пользователя в контекст запроса
 		ctx := context.WithValue(r.Context(), UserContextKey, userClaims)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})

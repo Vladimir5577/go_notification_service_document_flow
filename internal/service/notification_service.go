@@ -9,6 +9,8 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/jackc/pgx/v5/pgtype"
+
 	"notification_service_document_flow/internal/helper"
 	"notification_service_document_flow/internal/messaging/events"
 	"notification_service_document_flow/internal/model"
@@ -150,6 +152,10 @@ func validateEvent(evt events.NotificationEvent) error {
 	if strings.TrimSpace(evt.EventID) == "" {
 		return fmt.Errorf("%w: пустой eventId", ErrInvalidEvent)
 	}
+	var eventID pgtype.UUID
+	if err := eventID.Scan(evt.EventID); err != nil {
+		return fmt.Errorf("%w: eventId %q: %v", ErrInvalidEvent, evt.EventID, err)
+	}
 	if strings.TrimSpace(evt.Title) == "" {
 		return fmt.Errorf("%w: пустой title (event_id %s)", ErrInvalidEvent, evt.EventID)
 	}
@@ -192,6 +198,18 @@ func uniqueRecipients(ids []int64) []int64 {
 // Прежняя версия ещё и переписывала легаси-адреса монолита (/kanban_board/12,
 // /document_view/45) в маршруты SPA. Это больше не нужно: продюсеры общего
 // контракта присылают готовый маршрут, а монолитные источники уходят.
+// hasDotSegment — есть ли в декодированном пути сегмент «.» или «..».
+// Браузер схлопывает их: «/a/..//evil.example» и «/%2e//evil.example»
+// становятся «//evil.example», то есть адресом чужого сайта.
+func hasDotSegment(path string) bool {
+	for _, seg := range strings.Split(path, "/") {
+		if seg == "." || seg == ".." {
+			return true
+		}
+	}
+	return false
+}
+
 func normalizeLink(raw *string) *string {
 	if raw == nil {
 		return nil
@@ -203,12 +221,15 @@ func normalizeLink(raw *string) *string {
 	}
 
 	u, err := url.Parse(s)
-	if err != nil || !strings.HasPrefix(u.Path, "/") {
+	// Браузер читает «/\host» и «/<tab>/host» как адрес чужого сайта, поэтому
+	// такие пути отбрасываем, а наружу отдаём путь в исходном экранировании.
+	if err != nil || !strings.HasPrefix(u.Path, "/") || strings.HasPrefix(u.Path, "//") ||
+		strings.ContainsAny(u.Path, "\\\t\r\n") || hasDotSegment(u.Path) {
 		slog.Warn("ссылка события отброшена: ожидался путь внутри портала", "link", s)
 		return nil
 	}
 
-	path := u.Path
+	path := u.EscapedPath()
 	if u.RawQuery != "" {
 		path += "?" + u.RawQuery
 	}

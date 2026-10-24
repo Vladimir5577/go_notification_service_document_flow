@@ -158,7 +158,15 @@ func (c *Consumer) handleDelivery(ctx context.Context, delivery amqp.Delivery) {
 	err := c.safeProcess(ctx, delivery)
 
 	if err != nil {
-		// Requeue не делаем ни при какой ошибке. Постоянные (битый JSON,
+		if ctx.Err() != nil && !isPermanent(err) {
+			// Остановка сервиса не должна отправлять незавершённое событие в DLQ.
+			if nackErr := delivery.Nack(false, true); nackErr != nil {
+				slog.Error("Не удалось вернуть сообщение в очередь RabbitMQ", "error", nackErr)
+			}
+			return
+		}
+
+		// Вне остановки сервиса requeue не делаем. Постоянные (битый JSON,
 		// нарушение контракта, constraint) повтором не лечатся, а временные
 		// уже пережили минуту попыток. Именно бесконечный requeue когда-то
 		// и уронил сервис. Nack(requeue=false) отправит сообщение в

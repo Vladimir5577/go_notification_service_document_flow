@@ -56,8 +56,16 @@ func (h *NotificationHandler) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	total, _ := h.repo.CountAllForUser(r.Context(), user.ID)
-	unread, _ := h.repo.CountUnreadForUser(r.Context(), user.ID)
+	total, err := h.repo.CountAllForUser(r.Context(), user.ID)
+	if err != nil {
+		helper.WriteError(w, err)
+		return
+	}
+	unread, err := h.repo.CountUnreadForUser(r.Context(), user.ID)
+	if err != nil {
+		helper.WriteError(w, err)
+		return
+	}
 
 	items := make([]dto.NotificationResponse, len(notifications))
 	for i, n := range notifications {
@@ -95,7 +103,11 @@ func (h *NotificationHandler) Latest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	unread, _ := h.repo.CountUnreadForUser(r.Context(), user.ID)
+	unread, err := h.repo.CountUnreadForUser(r.Context(), user.ID)
+	if err != nil {
+		helper.WriteError(w, err)
+		return
+	}
 
 	items := make([]dto.NotificationResponse, len(notifications))
 	for i, n := range notifications {

@@ -18,17 +18,14 @@ func setupRouter(notificationHandler *handler.NotificationHandler, authMw *middl
 	r.Use(chiMiddleware.Recoverer)
 	r.Use(chiMiddleware.Timeout(15 * time.Second))
 
-	// Health check
 	r.Get("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Write([]byte(`{"status": "ok", "service": "notification"}`))
 	})
 
-	// Protected routes
 	r.Group(func(r chi.Router) {
 		r.Use(authMw.Handler)
 
-		// SPA Notifications API (matches frontend expectations)
 		r.Route("/spa/api/notifications", func(r chi.Router) {
 			r.Get("/", notificationHandler.List)
 			r.Get("/latest", notificationHandler.Latest)

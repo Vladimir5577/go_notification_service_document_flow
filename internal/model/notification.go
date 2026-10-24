@@ -5,7 +5,6 @@ import (
 	"time"
 )
 
-// Notification — доменная модель уведомления.
 type Notification struct {
 	ID int64 `json:"id"`
 	// EventID — id исходного события от продюсера, общий на всех его получателей.
@@ -23,7 +22,6 @@ type Notification struct {
 	UserID    int64           `json:"user_id"`
 }
 
-// IsRead возвращает true, если уведомление прочитано.
 func (n *Notification) IsRead() bool {
 	return n.ReadAt != nil
 }
